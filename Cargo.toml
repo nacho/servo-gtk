@@ -1,0 +1,23 @@
+[package]
+name = "servo-gtk"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gio = "0.21.2"
+glib = { version = "0.21", features = ["v2_74", "log_macros"] }
+gtk = { package="gtk4", version="0.10.1" }
+libservo = { git = "https://github.com/servo/servo.git", rev = "54ba027db6ba9717f65f9cb1b6e1edafaad428b7" }
+embedder_traits = { git = "https://github.com/servo/servo.git", rev = "54ba027db6ba9717f65f9cb1b6e1edafaad428b7" }
+js = { package = "mozjs", git = "https://github.com/servo/mozjs" }
+surfman = { version = "0.9", features = ["chains", "sm-angle", "sm-angle-default"] }
+gl = "0.14.0"
+epoxy = "0.1.0"
+libloading = "0.8.8"
+euclid = "0.22"
+url = "2.3"
+dpi = "0.1"
+rustls = { version = "0.23.12", default-features = false, features = ["aws-lc-rs"] }
+async-channel = "2.5.0"
+log = "0.4.0"
+image = "0.25"
