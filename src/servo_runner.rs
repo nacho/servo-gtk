@@ -5,7 +5,9 @@ use euclid::Point2D;
 use glib::{debug, info, warn};
 use image::RgbaImage;
 use servo::webrender_api::units::DeviceIntRect;
-use servo::{InputEvent, MouseMoveEvent, ServoBuilder};
+use servo::{
+    InputEvent, MouseButton, MouseButtonAction, MouseButtonEvent, MouseMoveEvent, ServoBuilder,
+};
 use servo::{RenderingContext, SoftwareRenderingContext, WebView, WebViewBuilder, WebViewDelegate};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -165,11 +167,31 @@ impl ServoRunner {
                     }
                     ServoAction::ButtonPress(button, x, y) => {
                         info!("Button press: button={}, x={}, y={}", button, x, y);
-                        // Handle button press action here
+                        let mouse_button = match button {
+                            1 => MouseButton::Left,
+                            2 => MouseButton::Middle,
+                            3 => MouseButton::Right,
+                            _ => MouseButton::Left,
+                        };
+                        webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
+                            MouseButtonAction::Down,
+                            mouse_button,
+                            Point2D::new(x as f32, y as f32),
+                        )));
                     }
                     ServoAction::ButtonRelease(button, x, y) => {
                         info!("Button release: button={}, x={}, y={}", button, x, y);
-                        // Handle button release action here
+                        let mouse_button = match button {
+                            1 => MouseButton::Left,
+                            2 => MouseButton::Middle,
+                            3 => MouseButton::Right,
+                            _ => MouseButton::Left,
+                        };
+                        webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
+                            MouseButtonAction::Up,
+                            mouse_button,
+                            Point2D::new(x as f32, y as f32),
+                        )));
                     }
                     ServoAction::Shutdown => break,
                 }
