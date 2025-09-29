@@ -138,8 +138,8 @@ impl ServoRunner {
                         }
                     }
                     ServoAction::Resize(width, height) => {
-                        // TODO: Send resize command to Servo
                         info!("Resizing to: {}x{}", width, height);
+                        webview.resize(PhysicalSize::new(width, height));
                     }
                     ServoAction::Shutdown => break,
                 }
