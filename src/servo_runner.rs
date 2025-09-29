@@ -130,7 +130,6 @@ impl ServoRunner {
                 match command {
                     ServoAction::LoadUrl(url) => {
                         if let Ok(parsed_url) = Url::parse(&url) {
-                            // TODO: Send load URL command to Servo
                             info!("Loading URL: {}", url);
                             webview.load(parsed_url);
                         } else {
