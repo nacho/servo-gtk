@@ -4,9 +4,11 @@ use embedder_traits::resources;
 use euclid::Point2D;
 use glib::{debug, info, warn};
 use image::RgbaImage;
+use keyboard_types::{Key, KeyState};
 use servo::webrender_api::units::DeviceIntRect;
 use servo::{
-    InputEvent, MouseButton, MouseButtonAction, MouseButtonEvent, MouseMoveEvent, ServoBuilder,
+    InputEvent, KeyboardEvent, MouseButton, MouseButtonAction, MouseButtonEvent, MouseMoveEvent,
+    ServoBuilder,
 };
 use servo::{RenderingContext, SoftwareRenderingContext, WebView, WebViewBuilder, WebViewDelegate};
 use std::path::PathBuf;
@@ -25,6 +27,8 @@ pub enum ServoAction {
     Motion(f64, f64),
     ButtonPress(u32, f64, f64),
     ButtonRelease(u32, f64, f64),
+    KeyPress(char),
+    KeyRelease(char),
     Shutdown,
 }
 
@@ -111,6 +115,14 @@ impl ServoRunner {
         let _ = self.sender.send(ServoAction::ButtonRelease(button, x, y));
     }
 
+    pub fn key_press(&self, keyval: char) {
+        let _ = self.sender.send(ServoAction::KeyPress(keyval));
+    }
+
+    pub fn key_release(&self, keyval: char) {
+        let _ = self.sender.send(ServoAction::KeyRelease(keyval));
+    }
+
     pub fn shutdown(&self) {
         let _ = self.sender.send(ServoAction::Shutdown);
     }
@@ -192,6 +204,18 @@ impl ServoRunner {
                             mouse_button,
                             Point2D::new(x as f32, y as f32),
                         )));
+                    }
+                    ServoAction::KeyPress(keyval) => {
+                        info!("Key press: keyval={}", keyval);
+                        let key = Key::Character(keyval.into());
+                        let key_event = KeyboardEvent::from_state_and_key(KeyState::Down, key);
+                        webview.notify_input_event(InputEvent::Keyboard(key_event));
+                    }
+                    ServoAction::KeyRelease(keyval) => {
+                        info!("Key release: keyval={}", keyval);
+                        let key = Key::Character(keyval.into());
+                        let key_event = KeyboardEvent::from_state_and_key(KeyState::Up, key);
+                        webview.notify_input_event(InputEvent::Keyboard(key_event));
                     }
                     ServoAction::Shutdown => break,
                 }

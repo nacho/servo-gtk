@@ -6249,6 +6249,7 @@ dependencies = [
  "glib",
  "gtk4",
  "image",
+ "keyboard-types",
  "libloading",
  "libservo",
  "log",

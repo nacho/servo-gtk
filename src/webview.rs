@@ -1,4 +1,5 @@
 use crate::servo_runner::{ServoEvent, ServoRunner};
+use glib::translate::*;
 use glib::{info, warn};
 use gtk::gdk;
 use gtk::prelude::*;
@@ -272,6 +273,33 @@ mod imp {
                 glib::Propagation::Proceed
             });
             gl_area.add_controller(legacy_controller);
+
+            // Add key event controller
+            let key_controller = gtk::EventControllerKey::new();
+            let obj_weak = self.obj().downgrade();
+            key_controller.connect_key_pressed(move |_, keyval, _keycode, _state| {
+                if let Some(obj) = obj_weak.upgrade() {
+                    let imp = obj.imp();
+                    if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+                        if let Some(unicode) = keyval.to_unicode() {
+                            servo.key_press(unicode);
+                        }
+                    }
+                }
+                glib::Propagation::Proceed
+            });
+            let obj_weak = self.obj().downgrade();
+            key_controller.connect_key_released(move |_, keyval, _keycode, _state| {
+                if let Some(obj) = obj_weak.upgrade() {
+                    let imp = obj.imp();
+                    if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+                        if let Some(unicode) = keyval.to_unicode() {
+                            servo.key_release(unicode);
+                        }
+                    }
+                }
+            });
+            gl_area.add_controller(key_controller);
 
             gl_area.set_parent(&*self.obj());
             self.gl_area.replace(Some(gl_area));
