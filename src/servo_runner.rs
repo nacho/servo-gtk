@@ -125,6 +125,8 @@ impl ServoRunner {
             .delegate(Rc::new(delegate))
             .build();
 
+        webview.focus_and_raise_to_top(true);
+
         loop {
             if let Ok(command) = receiver.try_recv() {
                 match command {
