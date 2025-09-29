@@ -21,6 +21,8 @@ pub enum ServoAction {
     LoadUrl(String),
     Resize(u32, u32),
     Motion(f64, f64),
+    ButtonPress(u32, f64, f64),
+    ButtonRelease(u32, f64, f64),
     Shutdown,
 }
 
@@ -99,6 +101,14 @@ impl ServoRunner {
         let _ = self.sender.send(ServoAction::Motion(x, y));
     }
 
+    pub fn button_press(&self, button: u32, x: f64, y: f64) {
+        let _ = self.sender.send(ServoAction::ButtonPress(button, x, y));
+    }
+
+    pub fn button_release(&self, button: u32, x: f64, y: f64) {
+        let _ = self.sender.send(ServoAction::ButtonRelease(button, x, y));
+    }
+
     pub fn shutdown(&self) {
         let _ = self.sender.send(ServoAction::Shutdown);
     }
@@ -152,6 +162,14 @@ impl ServoRunner {
                         webview.notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(
                             Point2D::new(x as f32, y as f32),
                         )));
+                    }
+                    ServoAction::ButtonPress(button, x, y) => {
+                        info!("Button press: button={}, x={}, y={}", button, x, y);
+                        // Handle button press action here
+                    }
+                    ServoAction::ButtonRelease(button, x, y) => {
+                        info!("Button release: button={}, x={}, y={}", button, x, y);
+                        // Handle button release action here
                     }
                     ServoAction::Shutdown => break,
                 }

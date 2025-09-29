@@ -1,5 +1,6 @@
 use crate::servo_runner::{ServoEvent, ServoRunner};
 use glib::{info, warn};
+use gtk::gdk;
 use gtk::prelude::*;
 use gtk::{glib, subclass::prelude::*};
 use image::RgbaImage;
@@ -239,6 +240,38 @@ mod imp {
                 }
             });
             gl_area.add_controller(motion_controller);
+
+            // Add legacy event controller for button events
+            let legacy_controller = gtk::EventControllerLegacy::new();
+            let obj_weak = self.obj().downgrade();
+            legacy_controller.connect_event(move |_, event| {
+                if let Some(obj) = obj_weak.upgrade() {
+                    let imp = obj.imp();
+                    if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+                        match event.event_type() {
+                            gdk::EventType::ButtonPress => {
+                                if let Some(button_event) = event.downcast_ref::<gdk::ButtonEvent>()
+                                {
+                                    if let Some((x, y)) = button_event.position() {
+                                        servo.button_press(button_event.button(), x, y);
+                                    }
+                                }
+                            }
+                            gdk::EventType::ButtonRelease => {
+                                if let Some(button_event) = event.downcast_ref::<gdk::ButtonEvent>()
+                                {
+                                    if let Some((x, y)) = button_event.position() {
+                                        servo.button_release(button_event.button(), x, y);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                glib::Propagation::Proceed
+            });
+            gl_area.add_controller(legacy_controller);
 
             gl_area.set_parent(&*self.obj());
             self.gl_area.replace(Some(gl_area));
