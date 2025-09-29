@@ -3,6 +3,14 @@ name = "servo-gtk"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "servo_gtk"
+path = "servo_gtk/lib.rs"
+
+[[example]]
+name = "browser"
+path = "examples/browser.rs"
+
 [dependencies]
 gio = "0.21.2"
 glib = { version = "0.21", features = ["v2_74", "log_macros"] }

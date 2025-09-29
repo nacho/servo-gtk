@@ -2,15 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-mod resources;
-mod servo_runner;
-mod webview;
-
 use glib::info;
 use gtk::prelude::*;
 use gtk::{Application, ApplicationWindow, Box, Entry, Orientation, glib};
+use servo_gtk::WebView;
 use std::ptr;
-use webview::WebView;
 
 const G_LOG_DOMAIN: &str = "ServoGtk";
 
