@@ -4,8 +4,8 @@ use embedder_traits::resources;
 use euclid::Point2D;
 use glib::{debug, info, warn};
 use image::RgbaImage;
-use servo::ServoBuilder;
 use servo::webrender_api::units::DeviceIntRect;
+use servo::{InputEvent, MouseMoveEvent, ServoBuilder};
 use servo::{RenderingContext, SoftwareRenderingContext, WebView, WebViewBuilder, WebViewDelegate};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -20,6 +20,7 @@ const G_LOG_DOMAIN: &str = "ServoGtk";
 pub enum ServoAction {
     LoadUrl(String),
     Resize(u32, u32),
+    Motion(f64, f64),
     Shutdown,
 }
 
@@ -94,6 +95,10 @@ impl ServoRunner {
         let _ = self.sender.send(ServoAction::Resize(width, height));
     }
 
+    pub fn motion(&self, x: f64, y: f64) {
+        let _ = self.sender.send(ServoAction::Motion(x, y));
+    }
+
     pub fn shutdown(&self) {
         let _ = self.sender.send(ServoAction::Shutdown);
     }
@@ -141,6 +146,12 @@ impl ServoRunner {
                     ServoAction::Resize(width, height) => {
                         info!("Resizing to: {}x{}", width, height);
                         webview.resize(PhysicalSize::new(width, height));
+                    }
+                    ServoAction::Motion(x, y) => {
+                        debug!("Motion: x={}, y={}", x, y);
+                        webview.notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(
+                            Point2D::new(x as f32, y as f32),
+                        )));
                     }
                     ServoAction::Shutdown => break,
                 }

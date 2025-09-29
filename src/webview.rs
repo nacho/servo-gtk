@@ -227,6 +227,19 @@ mod imp {
                 }
             });
 
+            // Add motion event controller
+            let motion_controller = gtk::EventControllerMotion::new();
+            let obj_weak = self.obj().downgrade();
+            motion_controller.connect_motion(move |_, x, y| {
+                if let Some(obj) = obj_weak.upgrade() {
+                    let imp = obj.imp();
+                    if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+                        servo.motion(x, y);
+                    }
+                }
+            });
+            gl_area.add_controller(motion_controller);
+
             gl_area.set_parent(&*self.obj());
             self.gl_area.replace(Some(gl_area));
 
