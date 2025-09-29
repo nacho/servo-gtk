@@ -217,12 +217,12 @@ mod imp {
             });
 
             let obj_weak = self.obj().downgrade();
-            gl_area.connect_resize(move |_, width, height| {
+            gl_area.connect_resize(move |area, width, height| {
                 if let Some(obj) = obj_weak.upgrade() {
                     let imp = obj.imp();
 
                     if let Some(servo) = imp.servo_runner.borrow().as_ref() {
-                        servo.resize(width as u32, height as u32);
+                        servo.resize(area.width() as u32, area.height() as u32);
                     }
                 }
             });
