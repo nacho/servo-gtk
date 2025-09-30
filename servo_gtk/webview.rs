@@ -359,6 +359,9 @@ impl WebView {
 
     fn process_servo_event(&self, event: ServoEvent) {
         match event {
+            // FIXME: this is just a hack to get me going. Ideally we would
+            // use a DMA-Buf so we avoid movign the pixels from the GPU to
+            // system memory and back to the GPU
             ServoEvent::FrameReady(rgba_image) => {
                 let imp = self.imp();
 
