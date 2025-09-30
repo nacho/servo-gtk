@@ -215,6 +215,11 @@ impl ServoRunner {
                             mouse_button,
                             Point2D::new(x as f32, y as f32),
                         )));
+                        webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
+                            MouseButtonAction::Click,
+                            mouse_button,
+                            Point2D::new(x as f32, y as f32),
+                        )));
                     }
                     ServoAction::ButtonRelease(button, x, y) => {
                         info!("Button release: button={}, x={}, y={}", button, x, y);
