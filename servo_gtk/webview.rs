@@ -94,7 +94,16 @@ mod imp {
                         gl::CompileShader(vertex_shader);
                         let mut status: i32 = 0;
                         gl::GetShaderiv(vertex_shader, gl::COMPILE_STATUS, &mut status);
-                        warn!("STATUS {status}");
+                        if status == 0 {
+                            let mut buf: [u8; 1024] = [0; 1024];
+                            gl::GetShaderInfoLog(
+                                vertex_shader,
+                                1024,
+                                std::ptr::null_mut(),
+                                buf.as_mut_ptr().cast(),
+                            );
+                            warn!("INFO LOG {:?}", std::str::from_utf8(&buf[..]).unwrap());
+                        }
 
                         let fragment_shader = gl::CreateShader(gl::FRAGMENT_SHADER);
                         let fragment_source = if area.uses_es() {
