@@ -15,7 +15,6 @@ use servo::{
     ServoBuilder,
 };
 use servo::{RenderingContext, SoftwareRenderingContext, WebView, WebViewBuilder, WebViewDelegate};
-use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
@@ -135,9 +134,9 @@ impl ServoRunner {
         info!("Servo thread running");
 
         init_crypto();
-        // FIXME
-        let resource_dir =
-            PathBuf::from("/home/ANT.AMAZON.COM/qignacio/git/servo-gtk").join("resources");
+        // FIXME: This should be taken from the system path instead of relative to executable
+        let exe_path = std::env::current_exe().expect("Failed to get executable path");
+        let resource_dir = exe_path.parent().unwrap().join("../../../resources");
         debug!("Resources are located at: {:?}", resource_dir);
         resources::set(Box::new(ResourceReaderInstance::new(resource_dir.clone())));
 
