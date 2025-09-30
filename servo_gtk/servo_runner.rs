@@ -5,11 +5,11 @@
 use async_channel;
 use dpi::PhysicalSize;
 use embedder_traits::resources;
-use euclid::Point2D;
+use euclid::{Point2D, Size2D};
 use glib::{debug, info, warn};
 use image::RgbaImage;
 use keyboard_types::{Key, KeyState};
-use servo::webrender_api::units::DeviceIntRect;
+use servo::webrender_api::units::{DeviceIntRect, DeviceRect};
 use servo::{
     InputEvent, KeyboardEvent, MouseButton, MouseButtonAction, MouseButtonEvent, MouseMoveEvent,
     ServoBuilder,
@@ -194,6 +194,10 @@ impl ServoRunner {
                     }
                     ServoAction::Resize(width, height) => {
                         info!("Resizing to: {}x{}", width, height);
+                        webview.move_resize(DeviceRect::from_origin_and_size(
+                            Point2D::origin(),
+                            Size2D::new(width as f32, height as f32),
+                        ));
                         webview.resize(PhysicalSize::new(width, height));
                     }
                     ServoAction::Motion(x, y) => {
