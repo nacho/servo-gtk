@@ -416,6 +416,25 @@ impl WebView {
             ServoEvent::LoadComplete => {
                 info!("Page load complete");
             }
+            ServoEvent::CursorChanged(cursor) => {
+                let gdk_cursor = match cursor {
+                    servo::Cursor::Default => gdk::Cursor::from_name("default", None),
+                    servo::Cursor::Pointer => gdk::Cursor::from_name("pointer", None),
+                    servo::Cursor::Text => gdk::Cursor::from_name("text", None),
+                    servo::Cursor::Wait => gdk::Cursor::from_name("wait", None),
+                    servo::Cursor::Help => gdk::Cursor::from_name("help", None),
+                    servo::Cursor::Crosshair => gdk::Cursor::from_name("crosshair", None),
+                    servo::Cursor::Move => gdk::Cursor::from_name("move", None),
+                    servo::Cursor::NotAllowed => gdk::Cursor::from_name("not-allowed", None),
+                    servo::Cursor::Grab => gdk::Cursor::from_name("grab", None),
+                    servo::Cursor::Grabbing => gdk::Cursor::from_name("grabbing", None),
+                    _ => gdk::Cursor::from_name("default", None),
+                };
+
+                if let Some(cursor) = gdk_cursor {
+                    self.set_cursor(Some(&cursor));
+                }
+            }
         }
     }
 }

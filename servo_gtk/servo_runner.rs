@@ -38,6 +38,7 @@ pub enum ServoAction {
 pub enum ServoEvent {
     FrameReady(RgbaImage),
     LoadComplete,
+    CursorChanged(servo::Cursor),
 }
 
 pub struct ServoRunner {
@@ -76,6 +77,12 @@ impl WebViewDelegate for ServoWebViewDelegate {
                 warn!("Could not set the pixels: {e}");
             }
         }
+    }
+
+    fn notify_cursor_changed(&self, _webview: servo::WebView, cursor: servo::Cursor) {
+        let _ = self
+            .event_sender
+            .send_blocking(ServoEvent::CursorChanged(cursor));
     }
 }
 
