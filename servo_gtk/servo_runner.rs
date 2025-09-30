@@ -135,10 +135,8 @@ impl ServoRunner {
 
         init_crypto();
         // FIXME: This should be taken from the system path instead of relative to executable
-        let exe_path = std::env::current_exe().expect("Failed to get executable path");
-        let resource_dir = exe_path.parent().unwrap().join("../../../resources");
-        debug!("Resources are located at: {:?}", resource_dir);
-        resources::set(Box::new(ResourceReaderInstance::new(resource_dir.clone())));
+        debug!("Loading resources from gresource");
+        resources::set(Box::new(ResourceReaderInstance::new()));
 
         // Create rendering context with initial size (matching servoshell pattern)
         let size = PhysicalSize::new(800, 600);

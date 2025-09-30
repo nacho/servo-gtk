@@ -2,29 +2,34 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-use std::fs;
+use gio::Resource;
+use glib::Bytes;
+use servo::resources::{Resource as ServoResource, ResourceReaderMethods};
 use std::path::PathBuf;
 
-use servo::resources::{Resource, ResourceReaderMethods};
-
-pub(crate) struct ResourceReaderInstance {
-    resource_dir: PathBuf,
-}
+pub(crate) struct ResourceReaderInstance;
 
 impl ResourceReaderInstance {
-    pub(crate) fn new(resource_dir: PathBuf) -> Self {
-        assert!(resource_dir.is_dir());
-        Self { resource_dir }
+    pub(crate) fn new() -> Self {
+        let resource_data = include_bytes!(concat!(env!("OUT_DIR"), "/resources.gresource"));
+        let bytes = Bytes::from_static(resource_data);
+        let resource = Resource::from_data(&bytes).expect("Failed to load gresource");
+        gio::resources_register(&resource);
+
+        Self
     }
 }
 
+unsafe impl Send for ResourceReaderInstance {}
+unsafe impl Sync for ResourceReaderInstance {}
+
 impl ResourceReaderMethods for ResourceReaderInstance {
-    fn read(&self, res: Resource) -> Vec<u8> {
-        let file_path = self.resource_dir.join(res.filename());
-        fs::read(&file_path).expect(&format!(
-            "Failed to read resource file {}",
-            file_path.display()
-        ))
+    fn read(&self, res: ServoResource) -> Vec<u8> {
+        let path = format!("/com/servo-gtk/{}", res.filename());
+
+        let bytes = gio::resources_lookup_data(&path, gio::ResourceLookupFlags::NONE)
+            .expect(&format!("Failed to read resource {}", path));
+        bytes.to_vec()
     }
 
     fn sandbox_access_files(&self) -> Vec<PathBuf> {
