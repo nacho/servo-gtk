@@ -161,20 +161,17 @@ impl ServoRunner {
         info!("Servo thread running");
 
         init_crypto();
-        // FIXME: This should be taken from the system path instead of relative to executable
+
         debug!("Loading resources from gresource");
         resources::set(Box::new(ResourceReaderInstance::new()));
 
-        // Create rendering context with initial size (matching servoshell pattern)
         let size = PhysicalSize::new(800, 600);
         let rendering_context = Rc::new(
             SoftwareRenderingContext::new(size)
                 .expect("Failed to create Software rendering context"),
         );
 
-        // Use ServoBuilder pattern like servoshell
         let servo_builder = ServoBuilder::new(rendering_context.clone());
-
         let servo = servo_builder.build();
 
         let delegate = ServoWebViewDelegate::new(event_sender, rendering_context);

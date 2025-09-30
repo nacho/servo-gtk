@@ -275,7 +275,6 @@ mod imp {
                 }
             });
 
-            // Add motion event controller
             let motion_controller = gtk::EventControllerMotion::new();
             let obj_weak = self.obj().downgrade();
             motion_controller.connect_motion(move |_, x, y| {
@@ -288,7 +287,6 @@ mod imp {
             });
             gl_area.add_controller(motion_controller);
 
-            // Add legacy event controller for button events
             let legacy_controller = gtk::EventControllerLegacy::new();
             let obj_weak = self.obj().downgrade();
             legacy_controller.connect_event(move |_, event| {
@@ -332,7 +330,6 @@ mod imp {
             });
             gl_area.add_controller(legacy_controller);
 
-            // Add key event controller
             let key_controller = gtk::EventControllerKey::new();
             let obj_weak = self.obj().downgrade();
             key_controller.connect_key_pressed(move |_, keyval, _keycode, _state| {
@@ -362,10 +359,7 @@ mod imp {
             gl_area.set_parent(&*self.obj());
             self.gl_area.replace(Some(gl_area));
 
-            // Initialize Servo thread (no GL needed)
             let servo_runner = ServoRunner::new();
-
-            // Start async event processing
             let event_receiver = servo_runner.event_receiver().clone();
             let obj_weak = self.obj().downgrade();
             glib::spawn_future_local(async move {
