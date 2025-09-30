@@ -295,52 +295,36 @@ mod imp {
                 if let Some(obj) = obj_weak.upgrade() {
                     let imp = obj.imp();
                     if let Some(servo) = imp.servo_runner.borrow().as_ref() {
-                        match event.event_type() {
-                            gdk::EventType::ButtonPress => {
-                                if let Some(button_event) = event.downcast_ref::<gdk::ButtonEvent>()
-                                {
-                                    if let Some((x, y)) = button_event.position() {
+                        if let Some((x, y)) = obj.translate_event_coordinates(event) {
+                            match event.event_type() {
+                                gdk::EventType::ButtonPress => {
+                                    if let Some(button_event) =
+                                        event.downcast_ref::<gdk::ButtonEvent>()
+                                    {
                                         servo.button_press(button_event.button(), x, y);
                                     }
                                 }
-                            }
-                            gdk::EventType::ButtonRelease => {
-                                if let Some(button_event) = event.downcast_ref::<gdk::ButtonEvent>()
-                                {
-                                    if let Some((x, y)) = button_event.position() {
+                                gdk::EventType::ButtonRelease => {
+                                    if let Some(button_event) =
+                                        event.downcast_ref::<gdk::ButtonEvent>()
+                                    {
                                         servo.button_release(button_event.button(), x, y);
                                     }
                                 }
-                            }
-                            gdk::EventType::TouchBegin => {
-                                if let Some(touch_event) = event.downcast_ref::<gdk::TouchEvent>() {
-                                    if let Some((x, y)) = touch_event.position() {
-                                        servo.touch_begin(x, y);
-                                    }
+                                gdk::EventType::TouchBegin => {
+                                    servo.touch_begin(x, y);
                                 }
-                            }
-                            gdk::EventType::TouchUpdate => {
-                                if let Some(touch_event) = event.downcast_ref::<gdk::TouchEvent>() {
-                                    if let Some((x, y)) = touch_event.position() {
-                                        servo.touch_update(x, y);
-                                    }
+                                gdk::EventType::TouchUpdate => {
+                                    servo.touch_update(x, y);
                                 }
-                            }
-                            gdk::EventType::TouchEnd => {
-                                if let Some(touch_event) = event.downcast_ref::<gdk::TouchEvent>() {
-                                    if let Some((x, y)) = touch_event.position() {
-                                        servo.touch_end(x, y);
-                                    }
+                                gdk::EventType::TouchEnd => {
+                                    servo.touch_end(x, y);
                                 }
-                            }
-                            gdk::EventType::TouchCancel => {
-                                if let Some(touch_event) = event.downcast_ref::<gdk::TouchEvent>() {
-                                    if let Some((x, y)) = touch_event.position() {
-                                        servo.touch_cancel(x, y);
-                                    }
+                                gdk::EventType::TouchCancel => {
+                                    servo.touch_cancel(x, y);
                                 }
+                                _ => {}
                             }
-                            _ => {}
                         }
                     }
                 }
@@ -425,6 +409,24 @@ impl WebView {
         if let Some(servo) = imp.servo_runner.borrow().as_ref() {
             servo.load_url(url);
         }
+    }
+
+    fn translate_event_coordinates(&self, event: &gdk::Event) -> Option<(f64, f64)> {
+        let root = self.root()?;
+        let native = root.native()?;
+        let (nx, ny) = native.surface_transform();
+
+        let (event_x, event_y) = event.position()?;
+        let event_x = event_x - nx;
+        let event_y = event_y - ny;
+
+        let gl_area = self.imp().gl_area.borrow();
+        let gl_area = gl_area.as_ref()?;
+
+        let point = gtk::graphene::Point::new(event_x as f32, event_y as f32);
+        let translated = root.compute_point(gl_area, &point)?;
+
+        Some((translated.x() as f64, translated.y() as f64))
     }
 
     fn process_servo_event(&self, event: ServoEvent) {
