@@ -49,23 +49,42 @@ mod imp {
                 area.make_current();
                 gl::load_with(|name| epoxy::get_proc_addr(name) as *const _);
 
+                if area.uses_es() {
+                    info!("Using OpenGL ES");
+                }
+
                 if let Some(obj) = obj_weak.upgrade() {
                     let imp = obj.imp();
                     unsafe {
                         // Create shader program
                         let vertex_shader = gl::CreateShader(gl::VERTEX_SHADER);
-                        let vertex_source = CString::new(
-                            "#version 320 es\n\
-                             precision highp float;\n\
-                             layout (location = 0) in vec2 aPos;\n\
-                             layout (location = 1) in vec2 aTexCoord;\n\
-                             out vec2 TexCoord;\n\
-                             void main() {\n\
-                                 gl_Position = vec4(aPos, 0.0, 1.0);\n\
-                                 TexCoord = aTexCoord;\n\
-                             }",
-                        )
-                        .unwrap();
+                        let vertex_source = if area.uses_es() {
+                            CString::new(
+                                "#version 320 es\n\
+                                 precision highp float;\n\
+                                 layout (location = 0) in vec2 aPos;\n\
+                                 layout (location = 1) in vec2 aTexCoord;\n\
+                                 out vec2 TexCoord;\n\
+                                 void main() {\n\
+                                     gl_Position = vec4(aPos, 0.0, 1.0);\n\
+                                     TexCoord = aTexCoord;\n\
+                                 }",
+                            )
+                            .expect("Vertex source")
+                        } else {
+                            CString::new(
+                                "#version 330 core\n\
+                                 layout (location = 0) in vec2 aPos;\n\
+                                 layout (location = 1) in vec2 aTexCoord;\n\
+                                 out vec2 TexCoord;\n\
+                                 void main() {\n\
+                                     gl_Position = vec4(aPos, 0.0, 1.0);\n\
+                                     TexCoord = aTexCoord;\n\
+                                 }",
+                            )
+                            .expect("Vertex source")
+                        };
+
                         gl::ShaderSource(
                             vertex_shader,
                             1,
@@ -78,17 +97,31 @@ mod imp {
                         warn!("STATUS {status}");
 
                         let fragment_shader = gl::CreateShader(gl::FRAGMENT_SHADER);
-                        let fragment_source = CString::new(
-                            "#version 320 es\n\
-                             precision highp float;\n\
-                             out vec4 FragColor;\n\
-                             in vec2 TexCoord;\n\
-                             uniform sampler2D ourTexture;\n\
-                             void main() {\n\
-                                 FragColor = texture(ourTexture, TexCoord);\n\
-                             }",
-                        )
-                        .unwrap();
+                        let fragment_source = if area.uses_es() {
+                            CString::new(
+                                "#version 320 es\n\
+                                 precision highp float;\n\
+                                 out vec4 FragColor;\n\
+                                 in vec2 TexCoord;\n\
+                                 uniform sampler2D ourTexture;\n\
+                                 void main() {\n\
+                                     FragColor = texture(ourTexture, TexCoord);\n\
+                                 }",
+                            )
+                            .expect("Fragment source")
+                        } else {
+                            CString::new(
+                                "#version 330 core\n\
+                                 out vec4 FragColor;\n\
+                                 in vec2 TexCoord;\n\
+                                 uniform sampler2D ourTexture;\n\
+                                 void main() {\n\
+                                     FragColor = texture(ourTexture, TexCoord);\n\
+                                 }",
+                            )
+                            .expect("Fragment source")
+                        };
+
                         gl::ShaderSource(
                             fragment_shader,
                             1,
