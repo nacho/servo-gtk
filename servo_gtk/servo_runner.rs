@@ -32,6 +32,10 @@ pub enum ServoAction {
     ButtonRelease(u32, f64, f64),
     KeyPress(char),
     KeyRelease(char),
+    TouchBegin(f64, f64),
+    TouchUpdate(f64, f64),
+    TouchEnd(f64, f64),
+    TouchCancel(f64, f64),
     Shutdown,
 }
 
@@ -133,6 +137,22 @@ impl ServoRunner {
         let _ = self.sender.send(ServoAction::KeyRelease(keyval));
     }
 
+    pub fn touch_begin(&self, x: f64, y: f64) {
+        let _ = self.sender.send(ServoAction::TouchBegin(x, y));
+    }
+
+    pub fn touch_update(&self, x: f64, y: f64) {
+        let _ = self.sender.send(ServoAction::TouchUpdate(x, y));
+    }
+
+    pub fn touch_end(&self, x: f64, y: f64) {
+        let _ = self.sender.send(ServoAction::TouchEnd(x, y));
+    }
+
+    pub fn touch_cancel(&self, x: f64, y: f64) {
+        let _ = self.sender.send(ServoAction::TouchCancel(x, y));
+    }
+
     pub fn shutdown(&self) {
         let _ = self.sender.send(ServoAction::Shutdown);
     }
@@ -224,6 +244,38 @@ impl ServoRunner {
                         let key = Key::Character(keyval.into());
                         let key_event = KeyboardEvent::from_state_and_key(KeyState::Up, key);
                         webview.notify_input_event(InputEvent::Keyboard(key_event));
+                    }
+                    ServoAction::TouchBegin(x, y) => {
+                        info!("Touch begin: x={}, y={}", x, y);
+                        webview.notify_input_event(InputEvent::Touch(servo::TouchEvent::new(
+                            servo::TouchEventType::Down,
+                            servo::TouchId(0),
+                            Point2D::new(x as f32, y as f32),
+                        )));
+                    }
+                    ServoAction::TouchUpdate(x, y) => {
+                        info!("Touch update: x={}, y={}", x, y);
+                        webview.notify_input_event(InputEvent::Touch(servo::TouchEvent::new(
+                            servo::TouchEventType::Move,
+                            servo::TouchId(0),
+                            Point2D::new(x as f32, y as f32),
+                        )));
+                    }
+                    ServoAction::TouchEnd(x, y) => {
+                        info!("Touch end: x={}, y={}", x, y);
+                        webview.notify_input_event(InputEvent::Touch(servo::TouchEvent::new(
+                            servo::TouchEventType::Up,
+                            servo::TouchId(0),
+                            Point2D::new(x as f32, y as f32),
+                        )));
+                    }
+                    ServoAction::TouchCancel(x, y) => {
+                        info!("Touch cancel: x={}, y={}", x, y);
+                        webview.notify_input_event(InputEvent::Touch(servo::TouchEvent::new(
+                            servo::TouchEventType::Cancel,
+                            servo::TouchId(0),
+                            Point2D::new(x as f32, y as f32),
+                        )));
                     }
                     ServoAction::Shutdown => break,
                 }

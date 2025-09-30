@@ -312,6 +312,34 @@ mod imp {
                                     }
                                 }
                             }
+                            gdk::EventType::TouchBegin => {
+                                if let Some(touch_event) = event.downcast_ref::<gdk::TouchEvent>() {
+                                    if let Some((x, y)) = touch_event.position() {
+                                        servo.touch_begin(x, y);
+                                    }
+                                }
+                            }
+                            gdk::EventType::TouchUpdate => {
+                                if let Some(touch_event) = event.downcast_ref::<gdk::TouchEvent>() {
+                                    if let Some((x, y)) = touch_event.position() {
+                                        servo.touch_update(x, y);
+                                    }
+                                }
+                            }
+                            gdk::EventType::TouchEnd => {
+                                if let Some(touch_event) = event.downcast_ref::<gdk::TouchEvent>() {
+                                    if let Some((x, y)) = touch_event.position() {
+                                        servo.touch_end(x, y);
+                                    }
+                                }
+                            }
+                            gdk::EventType::TouchCancel => {
+                                if let Some(touch_event) = event.downcast_ref::<gdk::TouchEvent>() {
+                                    if let Some((x, y)) = touch_event.position() {
+                                        servo.touch_cancel(x, y);
+                                    }
+                                }
+                            }
                             _ => {}
                         }
                     }
