@@ -356,6 +356,24 @@ mod imp {
             });
             gl_area.add_controller(key_controller);
 
+            // FIXME: ideally we would do some proper size measuring so
+            // we can embed the webview in a scrolled window. Checking the api
+            // we do not seem to get any notification of the page size so
+            // I don't think this can be done for now
+            let scroll_controller =
+                gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
+            let obj_weak = self.obj().downgrade();
+            scroll_controller.connect_scroll(move |_, delta_x, delta_y| {
+                if let Some(obj) = obj_weak.upgrade() {
+                    let imp = obj.imp();
+                    if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+                        servo.scroll(delta_x, delta_y);
+                    }
+                }
+                glib::Propagation::Stop
+            });
+            gl_area.add_controller(scroll_controller);
+
             gl_area.set_parent(&*self.obj());
             self.gl_area.replace(Some(gl_area));
 

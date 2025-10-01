@@ -9,7 +9,8 @@ use euclid::{Point2D, Size2D};
 use glib::{debug, info, warn};
 use image::RgbaImage;
 use keyboard_types::{Key, KeyState};
-use servo::webrender_api::units::{DeviceIntRect, DeviceRect};
+use servo::webrender_api::ScrollLocation;
+use servo::webrender_api::units::{DeviceIntPoint, DeviceIntRect, DeviceRect, LayoutVector2D};
 use servo::{
     InputEvent, KeyboardEvent, MouseButton, MouseButtonAction, MouseButtonEvent, MouseMoveEvent,
     ServoBuilder,
@@ -36,6 +37,7 @@ pub enum ServoAction {
     TouchUpdate(f64, f64),
     TouchEnd(f64, f64),
     TouchCancel(f64, f64),
+    Scroll(f64, f64),
     Shutdown,
 }
 
@@ -151,6 +153,10 @@ impl ServoRunner {
 
     pub fn touch_cancel(&self, x: f64, y: f64) {
         let _ = self.sender.send(ServoAction::TouchCancel(x, y));
+    }
+
+    pub fn scroll(&self, delta_x: f64, delta_y: f64) {
+        let _ = self.sender.send(ServoAction::Scroll(delta_x, delta_y));
     }
 
     pub fn shutdown(&self) {
@@ -282,6 +288,19 @@ impl ServoRunner {
                             servo::TouchId(0),
                             Point2D::new(x as f32, y as f32),
                         )));
+                    }
+                    ServoAction::Scroll(delta_x, delta_y) => {
+                        info!("Scroll: delta_x={}, delta_y={}", delta_x, delta_y);
+                        // FIXME: 20 and 10 are random numbers that appear in
+                        // winit_minimal. We should properly understand it and
+                        // maybe add some constants
+                        webview.notify_scroll_event(
+                            ScrollLocation::Delta(LayoutVector2D::new(
+                                20.0 * delta_x as f32,
+                                20.0 * delta_y as f32,
+                            )),
+                            DeviceIntPoint::new(10, 10),
+                        );
                     }
                     ServoAction::Shutdown => break,
                 }
