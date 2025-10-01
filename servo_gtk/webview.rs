@@ -43,6 +43,7 @@ mod imp {
             self.parent_constructed();
 
             let gl_area = gtk::GLArea::new();
+            gl_area.set_focusable(true);
 
             let obj_weak = self.obj().downgrade();
             gl_area.connect_realize(move |area| {
@@ -289,7 +290,7 @@ mod imp {
 
             let legacy_controller = gtk::EventControllerLegacy::new();
             let obj_weak = self.obj().downgrade();
-            legacy_controller.connect_event(move |_, event| {
+            legacy_controller.connect_event(move |controller, event| {
                 if let Some(obj) = obj_weak.upgrade() {
                     let imp = obj.imp();
                     if let Some(servo) = imp.servo_runner.borrow().as_ref() {
@@ -301,6 +302,7 @@ mod imp {
                                     {
                                         servo.button_press(button_event.button(), x, y);
                                     }
+                                    controller.widget().expect("Controller widget").grab_focus();
                                 }
                                 gdk::EventType::ButtonRelease => {
                                     if let Some(button_event) =
@@ -311,6 +313,7 @@ mod imp {
                                 }
                                 gdk::EventType::TouchBegin => {
                                     servo.touch_begin(x, y);
+                                    controller.widget().expect("Controller widget").grab_focus();
                                 }
                                 gdk::EventType::TouchUpdate => {
                                     servo.touch_update(x, y);
@@ -337,6 +340,7 @@ mod imp {
                     let imp = obj.imp();
                     if let Some(servo) = imp.servo_runner.borrow().as_ref() {
                         if let Some(unicode) = keyval.to_unicode() {
+                            info!("Pressed key {unicode}");
                             servo.key_press(unicode);
                         }
                     }
@@ -391,6 +395,23 @@ mod imp {
             });
 
             self.servo_runner.replace(Some(servo_runner));
+
+            // Note the focus controller is added on the webview since
+            // we want to proxy the focus the gl_area whenever something
+            // tries to grab the focus in the webview
+            let focus_controller = gtk::EventControllerFocus::new();
+            let obj_weak = self.obj().downgrade();
+            focus_controller.connect_enter(move |_| {
+                if let Some(obj) = obj_weak.upgrade() {
+                    let imp = obj.imp();
+                    if let Some(gl_area) = imp.gl_area.borrow().as_ref() {
+                        gl_area.grab_focus();
+                    }
+                }
+            });
+            self.obj().add_controller(focus_controller);
+
+            self.obj().set_focusable(true);
 
             info!("Webview constructed");
         }
