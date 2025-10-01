@@ -51,6 +51,12 @@ fn main() -> glib::ExitCode {
             .hexpand(true)
             .build();
 
+        let back_button = gtk::Button::from_icon_name("go-previous");
+        back_button.set_tooltip_text(Some("Go Back"));
+
+        let forward_button = gtk::Button::from_icon_name("go-next");
+        forward_button.set_tooltip_text(Some("Go Forward"));
+
         let reload_button = gtk::Button::from_icon_name("view-refresh");
         reload_button.set_tooltip_text(Some("Reload"));
 
@@ -69,6 +75,18 @@ fn main() -> glib::ExitCode {
             webview_clone.reload();
         });
 
+        let webview_clone = webview.clone();
+        back_button.connect_clicked(move |_| {
+            webview_clone.go_back();
+        });
+
+        let webview_clone = webview.clone();
+        forward_button.connect_clicked(move |_| {
+            webview_clone.go_forward();
+        });
+
+        hbox.append(&back_button);
+        hbox.append(&forward_button);
         hbox.append(&reload_button);
         hbox.append(&url_entry);
         vbox.append(&hbox);

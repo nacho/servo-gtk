@@ -28,6 +28,8 @@ const G_LOG_DOMAIN: &str = "ServoGtk";
 pub enum ServoAction {
     LoadUrl(String),
     Reload,
+    GoBack,
+    GoForward,
     Resize(u32, u32),
     Motion(f64, f64),
     ButtonPress(u32, f64, f64),
@@ -120,6 +122,14 @@ impl ServoRunner {
         let _ = self.sender.send(ServoAction::Reload);
     }
 
+    pub fn go_back(&self) {
+        let _ = self.sender.send(ServoAction::GoBack);
+    }
+
+    pub fn go_forward(&self) {
+        let _ = self.sender.send(ServoAction::GoForward);
+    }
+
     pub fn resize(&self, width: u32, height: u32) {
         let _ = self.sender.send(ServoAction::Resize(width, height));
     }
@@ -206,6 +216,14 @@ impl ServoRunner {
                     ServoAction::Reload => {
                         info!("Reloading page");
                         webview.reload();
+                    }
+                    ServoAction::GoBack => {
+                        info!("Going back");
+                        webview.go_back(1);
+                    }
+                    ServoAction::GoForward => {
+                        info!("Going forward");
+                        webview.go_forward(1);
                     }
                     ServoAction::Resize(width, height) => {
                         info!("Resizing to: {}x{}", width, height);

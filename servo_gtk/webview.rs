@@ -451,6 +451,20 @@ impl WebView {
         }
     }
 
+    pub fn go_back(&self) {
+        let imp = self.imp();
+        if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+            servo.go_back();
+        }
+    }
+
+    pub fn go_forward(&self) {
+        let imp = self.imp();
+        if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+            servo.go_forward();
+        }
+    }
+
     fn translate_event_coordinates(&self, event: &gdk::Event) -> Option<(f64, f64)> {
         let root = self.root()?;
         let native = root.native()?;
