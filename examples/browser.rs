@@ -42,10 +42,17 @@ fn main() -> glib::ExitCode {
 
         let vbox = Box::new(Orientation::Vertical, 5);
 
+        // Create horizontal box for URL entry and reload button
+        let hbox = Box::new(Orientation::Horizontal, 5);
+
         let url_entry = Entry::builder()
             .placeholder_text("Enter URL...")
             .text("https://example.com")
+            .hexpand(true)
             .build();
+
+        let reload_button = gtk::Button::from_icon_name("view-refresh");
+        reload_button.set_tooltip_text(Some("Reload"));
 
         let webview = WebView::new();
         webview.set_hexpand(true);
@@ -57,7 +64,14 @@ fn main() -> glib::ExitCode {
             webview_clone.load_url(&url);
         });
 
-        vbox.append(&url_entry);
+        let webview_clone = webview.clone();
+        reload_button.connect_clicked(move |_| {
+            webview_clone.reload();
+        });
+
+        hbox.append(&reload_button);
+        hbox.append(&url_entry);
+        vbox.append(&hbox);
         vbox.append(&webview);
 
         window.set_child(Some(&vbox));
