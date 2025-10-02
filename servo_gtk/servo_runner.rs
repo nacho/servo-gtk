@@ -329,7 +329,10 @@ impl ServoRunner {
                             DeviceIntPoint::new(10, 10),
                         );
                     }
-                    ServoAction::Shutdown => break,
+                    ServoAction::Shutdown => {
+                        servo.deinit();
+                        break;
+                    }
                 }
             }
 
