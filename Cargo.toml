@@ -7,6 +7,10 @@ edition = "2024"
 name = "servo_gtk"
 path = "servo_gtk/lib.rs"
 
+[[bin]]
+name = "servo-runner"
+path = "servo_runner/runner.rs"
+
 [[example]]
 name = "browser"
 path = "examples/browser.rs"
@@ -30,6 +34,8 @@ async-channel = "2.5.0"
 log = "0.4.0"
 image = "0.25"
 keyboard-types = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 [build-dependencies]
 glib-build-tools = "0.21"
