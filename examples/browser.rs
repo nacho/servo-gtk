@@ -60,29 +60,29 @@ fn main() -> glib::ExitCode {
         let reload_button = gtk::Button::from_icon_name("view-refresh");
         reload_button.set_tooltip_text(Some("Reload"));
 
-        let webview = WebView::new();
-        webview.set_hexpand(true);
-        webview.set_vexpand(true);
+        let web_view = WebView::new();
+        web_view.set_hexpand(true);
+        web_view.set_vexpand(true);
 
-        let webview_clone = webview.clone();
+        let web_view_clone = web_view.clone();
         url_entry.connect_activate(move |entry| {
             let url = entry.text();
-            webview_clone.load_url(&url);
+            web_view_clone.load_url(&url);
         });
 
-        let webview_clone = webview.clone();
+        let web_view_clone = web_view.clone();
         reload_button.connect_clicked(move |_| {
-            webview_clone.reload();
+            web_view_clone.reload();
         });
 
-        let webview_clone = webview.clone();
+        let web_view_clone = web_view.clone();
         back_button.connect_clicked(move |_| {
-            webview_clone.go_back();
+            web_view_clone.go_back();
         });
 
-        let webview_clone = webview.clone();
+        let web_view_clone = web_view.clone();
         forward_button.connect_clicked(move |_| {
-            webview_clone.go_forward();
+            web_view_clone.go_forward();
         });
 
         hbox.append(&back_button);
@@ -90,13 +90,13 @@ fn main() -> glib::ExitCode {
         hbox.append(&reload_button);
         hbox.append(&url_entry);
         vbox.append(&hbox);
-        vbox.append(&webview);
+        vbox.append(&web_view);
 
         window.set_child(Some(&vbox));
         window.present();
 
         // Load initial URL
-        webview.load_url("https://example.com");
+        web_view.load_url("https://example.com");
     });
 
     app.run()

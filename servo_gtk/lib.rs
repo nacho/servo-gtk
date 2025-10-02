@@ -4,6 +4,6 @@
 
 pub mod resources;
 pub mod servo_runner;
-pub mod webview;
+pub mod web_view;
 
-pub use webview::WebView;
+pub use web_view::WebView;
