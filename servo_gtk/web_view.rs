@@ -2,7 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use crate::servo_runner::{ServoEvent, ServoRunner};
+use crate::ipc::ServoEvent;
+use crate::servo_runner::ServoRunner;
 use glib::translate::*;
 use glib::{info, warn};
 use gtk::gdk;
@@ -380,7 +381,10 @@ mod imp {
             self.gl_area.replace(Some(gl_area));
 
             let servo_runner = ServoRunner::new();
-            let event_receiver = servo_runner.event_receiver().clone();
+            let event_receiver = servo_runner.event_receiver();
+
+            self.servo_runner.replace(Some(servo_runner));
+
             let obj_weak = self.obj().downgrade();
             glib::spawn_future_local(async move {
                 while let Ok(event) = event_receiver.recv().await {
@@ -391,8 +395,6 @@ mod imp {
                     }
                 }
             });
-
-            self.servo_runner.replace(Some(servo_runner));
 
             // Note the focus controller is added on the webview since
             // we want to proxy the focus the gl_area whenever something
@@ -487,7 +489,8 @@ impl WebView {
             // FIXME: this is just a hack to get me going. Ideally we would
             // use a DMA-Buf so we avoid movign the pixels from the GPU to
             // system memory and back to the GPU
-            ServoEvent::FrameReady(rgba_image) => {
+            ServoEvent::FrameReady(data, width, height) => {
+                let rgba_image = RgbaImage::from_raw(width, height, data).unwrap();
                 let imp = self.imp();
 
                 imp.last_image.replace(Some(rgba_image));
@@ -499,20 +502,8 @@ impl WebView {
             ServoEvent::LoadComplete => {
                 info!("Page load complete");
             }
-            ServoEvent::CursorChanged(cursor) => {
-                let gdk_cursor = match cursor {
-                    servo::Cursor::Default => gdk::Cursor::from_name("default", None),
-                    servo::Cursor::Pointer => gdk::Cursor::from_name("pointer", None),
-                    servo::Cursor::Text => gdk::Cursor::from_name("text", None),
-                    servo::Cursor::Wait => gdk::Cursor::from_name("wait", None),
-                    servo::Cursor::Help => gdk::Cursor::from_name("help", None),
-                    servo::Cursor::Crosshair => gdk::Cursor::from_name("crosshair", None),
-                    servo::Cursor::Move => gdk::Cursor::from_name("move", None),
-                    servo::Cursor::NotAllowed => gdk::Cursor::from_name("not-allowed", None),
-                    servo::Cursor::Grab => gdk::Cursor::from_name("grab", None),
-                    servo::Cursor::Grabbing => gdk::Cursor::from_name("grabbing", None),
-                    _ => gdk::Cursor::from_name("default", None),
-                };
+            ServoEvent::CursorChanged(cursor_name) => {
+                let gdk_cursor = gdk::Cursor::from_name(&cursor_name, None);
 
                 if let Some(cursor) = gdk_cursor {
                     self.set_cursor(Some(&cursor));
