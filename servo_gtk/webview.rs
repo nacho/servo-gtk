@@ -293,39 +293,37 @@ mod imp {
             legacy_controller.connect_event(move |controller, event| {
                 if let Some(obj) = obj_weak.upgrade() {
                     let imp = obj.imp();
-                    if let Some(servo) = imp.servo_runner.borrow().as_ref() {
-                        if let Some((x, y)) = obj.translate_event_coordinates(event) {
-                            match event.event_type() {
-                                gdk::EventType::ButtonPress => {
-                                    if let Some(button_event) =
-                                        event.downcast_ref::<gdk::ButtonEvent>()
-                                    {
-                                        servo.button_press(button_event.button(), x, y);
-                                    }
-                                    controller.widget().expect("Controller widget").grab_focus();
+                    if let Some(servo) = imp.servo_runner.borrow().as_ref()
+                        && let Some((x, y)) = obj.translate_event_coordinates(event)
+                    {
+                        match event.event_type() {
+                            gdk::EventType::ButtonPress => {
+                                if let Some(button_event) = event.downcast_ref::<gdk::ButtonEvent>()
+                                {
+                                    servo.button_press(button_event.button(), x, y);
                                 }
-                                gdk::EventType::ButtonRelease => {
-                                    if let Some(button_event) =
-                                        event.downcast_ref::<gdk::ButtonEvent>()
-                                    {
-                                        servo.button_release(button_event.button(), x, y);
-                                    }
-                                }
-                                gdk::EventType::TouchBegin => {
-                                    servo.touch_begin(x, y);
-                                    controller.widget().expect("Controller widget").grab_focus();
-                                }
-                                gdk::EventType::TouchUpdate => {
-                                    servo.touch_update(x, y);
-                                }
-                                gdk::EventType::TouchEnd => {
-                                    servo.touch_end(x, y);
-                                }
-                                gdk::EventType::TouchCancel => {
-                                    servo.touch_cancel(x, y);
-                                }
-                                _ => {}
+                                controller.widget().expect("Controller widget").grab_focus();
                             }
+                            gdk::EventType::ButtonRelease => {
+                                if let Some(button_event) = event.downcast_ref::<gdk::ButtonEvent>()
+                                {
+                                    servo.button_release(button_event.button(), x, y);
+                                }
+                            }
+                            gdk::EventType::TouchBegin => {
+                                servo.touch_begin(x, y);
+                                controller.widget().expect("Controller widget").grab_focus();
+                            }
+                            gdk::EventType::TouchUpdate => {
+                                servo.touch_update(x, y);
+                            }
+                            gdk::EventType::TouchEnd => {
+                                servo.touch_end(x, y);
+                            }
+                            gdk::EventType::TouchCancel => {
+                                servo.touch_cancel(x, y);
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -338,11 +336,11 @@ mod imp {
             key_controller.connect_key_pressed(move |_, keyval, _keycode, _state| {
                 if let Some(obj) = obj_weak.upgrade() {
                     let imp = obj.imp();
-                    if let Some(servo) = imp.servo_runner.borrow().as_ref() {
-                        if let Some(unicode) = keyval.to_unicode() {
-                            info!("Pressed key {unicode}");
-                            servo.key_press(unicode);
-                        }
+                    if let Some(servo) = imp.servo_runner.borrow().as_ref()
+                        && let Some(unicode) = keyval.to_unicode()
+                    {
+                        info!("Pressed key {unicode}");
+                        servo.key_press(unicode);
                     }
                 }
                 glib::Propagation::Proceed
@@ -351,10 +349,10 @@ mod imp {
             key_controller.connect_key_released(move |_, keyval, _keycode, _state| {
                 if let Some(obj) = obj_weak.upgrade() {
                     let imp = obj.imp();
-                    if let Some(servo) = imp.servo_runner.borrow().as_ref() {
-                        if let Some(unicode) = keyval.to_unicode() {
-                            servo.key_release(unicode);
-                        }
+                    if let Some(servo) = imp.servo_runner.borrow().as_ref()
+                        && let Some(unicode) = keyval.to_unicode()
+                    {
+                        servo.key_release(unicode);
                     }
                 }
             });

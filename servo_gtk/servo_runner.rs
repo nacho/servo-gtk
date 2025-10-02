@@ -78,13 +78,12 @@ impl WebViewDelegate for ServoWebViewDelegate {
         let viewport_rect = DeviceIntRect::from_origin_and_size(Point2D::origin(), size);
         webview.paint();
         self.rendering_context.present();
-        if let Some(rgba_image) = self.rendering_context.read_to_image(viewport_rect) {
-            if let Err(e) = self
+        if let Some(rgba_image) = self.rendering_context.read_to_image(viewport_rect)
+            && let Err(e) = self
                 .event_sender
                 .send_blocking(ServoEvent::FrameReady(rgba_image.clone()))
-            {
-                warn!("Could not set the pixels: {e}");
-            }
+        {
+            warn!("Could not set the pixels: {e}");
         }
     }
 
