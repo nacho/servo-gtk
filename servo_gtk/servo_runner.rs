@@ -95,6 +95,7 @@ impl WebViewDelegate for ServoWebViewDelegate {
     }
 }
 
+#[allow(clippy::new_without_default)]
 impl ServoRunner {
     pub fn new() -> Self {
         let (sender, receiver) = mpsc::channel();

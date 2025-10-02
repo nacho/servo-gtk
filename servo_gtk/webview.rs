@@ -432,6 +432,7 @@ glib::wrapper! {
         @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
 }
 
+#[allow(clippy::new_without_default)]
 impl WebView {
     pub fn new() -> Self {
         glib::Object::builder().build()
