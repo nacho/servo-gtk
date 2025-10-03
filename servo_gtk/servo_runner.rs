@@ -4,10 +4,10 @@
 
 use async_channel;
 use gio::prelude::*;
-use gio::{DataInputStream, OutputStream, Subprocess, SubprocessFlags, SubprocessLauncher};
+use gio::{OutputStream, Subprocess, SubprocessFlags, SubprocessLauncher};
 use std::ffi::OsStr;
 
-use crate::ipc::{ServoAction, ServoEvent};
+use crate::proto_ipc::{ServoAction, ServoEvent, servo_action};
 
 pub struct ServoRunner {
     stdin: OutputStream,
@@ -39,15 +39,35 @@ impl ServoRunner {
             #[strong]
             stdout,
             async move {
-                let data_stream = DataInputStream::new(&stdout);
-                while let Ok(Some(line)) =
-                    data_stream.read_line_future(glib::Priority::DEFAULT).await
-                {
-                    let line_str = String::from_utf8_lossy(&line);
-                    if let Ok(event) = serde_json::from_str::<ServoEvent>(&line_str)
-                        && event_sender.send(event).await.is_err()
+                loop {
+                    // Read 4-byte length prefix
+                    let len_buf = vec![0u8; 4];
+                    match stdout
+                        .read_all_future(len_buf, glib::Priority::DEFAULT)
+                        .await
                     {
-                        break;
+                        Ok((len_buf, _, _)) => {
+                            let len = u32::from_le_bytes([
+                                len_buf[0], len_buf[1], len_buf[2], len_buf[3],
+                            ]) as usize;
+
+                            // Read message data
+                            let msg_buf = vec![0u8; len];
+                            match stdout
+                                .read_all_future(msg_buf, glib::Priority::DEFAULT)
+                                .await
+                            {
+                                Ok((msg_buf, _, _)) => {
+                                    if let Ok(event) = ServoEvent::decode_from_slice(&msg_buf)
+                                        && event_sender.send(event).await.is_err()
+                                    {
+                                        break;
+                                    }
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                        Err(_) => break,
                     }
                 }
             }
@@ -63,11 +83,14 @@ impl ServoRunner {
     fn send_action(&self, action: ServoAction) {
         let stdin = self.stdin.clone();
         glib::spawn_future_local(async move {
-            if let Ok(json) = serde_json::to_string(&action) {
-                let data = format!("{}\n", json);
-                let bytes = data.into_bytes();
-                let _ = stdin.write_all_future(bytes, glib::Priority::DEFAULT).await;
-            }
+            let encoded = action.encode_to_vec();
+            let len = (encoded.len() as u32).to_le_bytes();
+            let _ = stdin
+                .write_all_future(len.to_vec(), glib::Priority::DEFAULT)
+                .await;
+            let _ = stdin
+                .write_all_future(encoded, glib::Priority::DEFAULT)
+                .await;
         });
     }
 
@@ -76,67 +99,129 @@ impl ServoRunner {
     }
 
     pub fn load_url(&self, url: &str) {
-        self.send_action(ServoAction::LoadUrl(url.to_string()));
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::LoadUrl(crate::proto_ipc::LoadUrl {
+                url: url.to_string(),
+            })),
+        });
     }
 
     pub fn reload(&self) {
-        self.send_action(ServoAction::Reload);
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::Reload(true)),
+        });
     }
 
     pub fn go_back(&self) {
-        self.send_action(ServoAction::GoBack);
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::GoBack(true)),
+        });
     }
 
     pub fn go_forward(&self) {
-        self.send_action(ServoAction::GoForward);
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::GoForward(true)),
+        });
     }
 
     pub fn resize(&self, width: u32, height: u32) {
-        self.send_action(ServoAction::Resize(width, height));
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::Resize(crate::proto_ipc::Resize {
+                width,
+                height,
+            })),
+        });
     }
 
     pub fn motion(&self, x: f64, y: f64) {
-        self.send_action(ServoAction::Motion(x, y));
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::Motion(crate::proto_ipc::Motion {
+                x,
+                y,
+            })),
+        });
     }
 
     pub fn button_press(&self, button: u32, x: f64, y: f64) {
-        self.send_action(ServoAction::ButtonPress(button, x, y));
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::ButtonPress(
+                crate::proto_ipc::ButtonPress { button, x, y },
+            )),
+        });
     }
 
     pub fn button_release(&self, button: u32, x: f64, y: f64) {
-        self.send_action(ServoAction::ButtonRelease(button, x, y));
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::ButtonRelease(
+                crate::proto_ipc::ButtonRelease { button, x, y },
+            )),
+        });
     }
 
     pub fn key_press(&self, key: char) {
-        self.send_action(ServoAction::KeyPress(key));
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::KeyPress(crate::proto_ipc::KeyPress {
+                key: key.to_string(),
+            })),
+        });
     }
 
     pub fn key_release(&self, key: char) {
-        self.send_action(ServoAction::KeyRelease(key));
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::KeyRelease(
+                crate::proto_ipc::KeyRelease {
+                    key: key.to_string(),
+                },
+            )),
+        });
     }
 
     pub fn scroll(&self, dx: f64, dy: f64) {
-        self.send_action(ServoAction::Scroll(dx, dy));
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::Scroll(crate::proto_ipc::Scroll {
+                dx,
+                dy,
+            })),
+        });
     }
 
     pub fn touch_begin(&self, x: f64, y: f64) {
-        self.send_action(ServoAction::TouchBegin(x, y));
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::TouchBegin(
+                crate::proto_ipc::TouchBegin { x, y },
+            )),
+        });
     }
 
     pub fn touch_update(&self, x: f64, y: f64) {
-        self.send_action(ServoAction::TouchUpdate(x, y));
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::TouchUpdate(
+                crate::proto_ipc::TouchUpdate { x, y },
+            )),
+        });
     }
 
     pub fn touch_end(&self, x: f64, y: f64) {
-        self.send_action(ServoAction::TouchEnd(x, y));
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::TouchEnd(crate::proto_ipc::TouchEnd {
+                x,
+                y,
+            })),
+        });
     }
 
     pub fn touch_cancel(&self, x: f64, y: f64) {
-        self.send_action(ServoAction::TouchCancel(x, y));
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::TouchCancel(
+                crate::proto_ipc::TouchCancel { x, y },
+            )),
+        });
     }
 
     pub fn shutdown(&self) {
-        self.send_action(ServoAction::Shutdown);
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::Shutdown(true)),
+        });
     }
 }
 

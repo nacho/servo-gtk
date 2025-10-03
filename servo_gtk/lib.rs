@@ -2,10 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-pub mod ipc;
+pub mod proto_ipc;
 pub mod resources;
 pub mod servo_runner;
 pub mod web_view;
 
-pub use ipc::{ServoAction, ServoEvent};
 pub use web_view::WebView;

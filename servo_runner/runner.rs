@@ -1,4 +1,8 @@
-use std::io::{self, Write};
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+use std::io::{self, Read, Write};
 use std::rc::Rc;
 
 use core::time::Duration;
@@ -18,8 +22,18 @@ use std::sync::mpsc::Receiver;
 use std::thread;
 use url::Url;
 
-use servo_gtk::ipc::{ServoAction, ServoEvent};
+use servo_gtk::proto_ipc::{
+    CursorChanged, FrameReady, ServoAction, ServoEvent, servo_action, servo_event,
+};
 use servo_gtk::resources::ResourceReaderInstance;
+
+fn send_event(event: ServoEvent) {
+    let encoded = event.encode_to_vec();
+    let len = (encoded.len() as u32).to_le_bytes();
+    io::stdout().write_all(&len).unwrap();
+    io::stdout().write_all(&encoded).unwrap();
+    io::stdout().flush().unwrap();
+}
 
 struct ServoWebViewDelegate {
     rendering_context: Rc<dyn RenderingContext>,
@@ -43,11 +57,14 @@ impl WebViewDelegate for ServoWebViewDelegate {
             let height = rgba_image.height();
             let data = rgba_image.into_raw();
 
-            let event = ServoEvent::FrameReady(data, width, height);
-            if let Ok(json) = serde_json::to_string(&event) {
-                println!("{}", json);
-                io::stdout().flush().unwrap();
-            }
+            let event = ServoEvent {
+                event: Some(servo_event::Event::FrameReady(FrameReady {
+                    rgba_data: data,
+                    width,
+                    height,
+                })),
+            };
+            send_event(event);
         }
     }
 
@@ -89,11 +106,12 @@ impl WebViewDelegate for ServoWebViewDelegate {
             servo::Cursor::Progress => "progress",
             _ => "default",
         };
-        let event = ServoEvent::CursorChanged(cursor_str.to_string());
-        if let Ok(json) = serde_json::to_string(&event) {
-            println!("{}", json);
-            io::stdout().flush().unwrap();
-        }
+        let event = ServoEvent {
+            event: Some(servo_event::Event::CursorChanged(CursorChanged {
+                cursor: cursor_str.to_string(),
+            })),
+        };
+        send_event(event);
     }
 }
 
@@ -106,11 +124,23 @@ fn init_crypto() {
 fn spawn_stdin_channel() -> Receiver<ServoAction> {
     let (tx, rx) = mpsc::channel::<ServoAction>();
     thread::spawn(move || {
+        let mut stdin = io::stdin();
         loop {
-            let mut buffer = String::new();
-            io::stdin().read_line(&mut buffer).unwrap();
-            if let Ok(action) = serde_json::from_str::<ServoAction>(buffer.trim()) {
-                tx.send(action).unwrap();
+            let mut len_buf = [0u8; 4];
+            if stdin.read_exact(&mut len_buf).is_err() {
+                break;
+            }
+            let len = u32::from_le_bytes(len_buf) as usize;
+
+            let mut msg_buf = vec![0u8; len];
+            if stdin.read_exact(&mut msg_buf).is_err() {
+                break;
+            }
+
+            if let Ok(action) = ServoAction::decode_from_slice(&msg_buf)
+                && tx.send(action).is_err()
+            {
+                break;
             }
         }
     });
@@ -137,36 +167,38 @@ fn main() {
     let receiver = spawn_stdin_channel();
 
     loop {
-        if let Ok(action) = receiver.try_recv() {
-            match action {
-                ServoAction::LoadUrl(url) => {
-                    if let Ok(parsed_url) = Url::parse(&url) {
+        if let Ok(action) = receiver.try_recv()
+            && let Some(action_type) = action.action
+        {
+            match action_type {
+                servo_action::Action::LoadUrl(load_url) => {
+                    if let Ok(parsed_url) = Url::parse(&load_url.url) {
                         webview.load(parsed_url);
                     }
                 }
-                ServoAction::Reload => {
+                servo_action::Action::Reload(_) => {
                     webview.reload();
                 }
-                ServoAction::GoBack => {
+                servo_action::Action::GoBack(_) => {
                     let _ = webview.go_back(1);
                 }
-                ServoAction::GoForward => {
+                servo_action::Action::GoForward(_) => {
                     let _ = webview.go_forward(1);
                 }
-                ServoAction::Resize(width, height) => {
+                servo_action::Action::Resize(resize) => {
                     webview.move_resize(DeviceRect::from_origin_and_size(
                         Point2D::origin(),
-                        Size2D::new(width as f32, height as f32),
+                        Size2D::new(resize.width as f32, resize.height as f32),
                     ));
-                    webview.resize(PhysicalSize::new(width, height));
+                    webview.resize(PhysicalSize::new(resize.width, resize.height));
                 }
-                ServoAction::Motion(x, y) => {
+                servo_action::Action::Motion(motion) => {
                     webview.notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(
-                        Point2D::new(x as f32, y as f32),
+                        Point2D::new(motion.x as f32, motion.y as f32),
                     )));
                 }
-                ServoAction::ButtonPress(button, x, y) => {
-                    let mouse_button = match button {
+                servo_action::Action::ButtonPress(button_press) => {
+                    let mouse_button = match button_press.button {
                         1 => MouseButton::Left,
                         2 => MouseButton::Middle,
                         3 => MouseButton::Right,
@@ -175,11 +207,11 @@ fn main() {
                     webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
                         MouseButtonAction::Down,
                         mouse_button,
-                        Point2D::new(x as f32, y as f32),
+                        Point2D::new(button_press.x as f32, button_press.y as f32),
                     )));
                 }
-                ServoAction::ButtonRelease(button, x, y) => {
-                    let mouse_button = match button {
+                servo_action::Action::ButtonRelease(button_release) => {
+                    let mouse_button = match button_release.button {
                         1 => MouseButton::Left,
                         2 => MouseButton::Middle,
                         3 => MouseButton::Right,
@@ -188,61 +220,60 @@ fn main() {
                     webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
                         MouseButtonAction::Up,
                         mouse_button,
-                        Point2D::new(x as f32, y as f32),
+                        Point2D::new(button_release.x as f32, button_release.y as f32),
                     )));
                 }
-                ServoAction::KeyPress(keyval) => {
-                    let key = Key::Character(keyval.into());
+                servo_action::Action::KeyPress(key_press) => {
+                    let key = Key::Character(key_press.key);
                     let key_event = KeyboardEvent::from_state_and_key(KeyState::Down, key);
                     webview.notify_input_event(InputEvent::Keyboard(key_event));
                 }
-                ServoAction::KeyRelease(keyval) => {
-                    let key = Key::Character(keyval.into());
+                servo_action::Action::KeyRelease(key_release) => {
+                    let key = Key::Character(key_release.key);
                     let key_event = KeyboardEvent::from_state_and_key(KeyState::Up, key);
                     webview.notify_input_event(InputEvent::Keyboard(key_event));
                 }
-                ServoAction::TouchBegin(x, y) => {
+                servo_action::Action::TouchBegin(touch_begin) => {
                     webview.notify_input_event(InputEvent::Touch(servo::TouchEvent::new(
                         servo::TouchEventType::Down,
                         servo::TouchId(0),
-                        Point2D::new(x as f32, y as f32),
+                        Point2D::new(touch_begin.x as f32, touch_begin.y as f32),
                     )));
                 }
-                ServoAction::TouchUpdate(x, y) => {
+                servo_action::Action::TouchUpdate(touch_update) => {
                     webview.notify_input_event(InputEvent::Touch(servo::TouchEvent::new(
                         servo::TouchEventType::Move,
                         servo::TouchId(0),
-                        Point2D::new(x as f32, y as f32),
+                        Point2D::new(touch_update.x as f32, touch_update.y as f32),
                     )));
                 }
-                ServoAction::TouchEnd(x, y) => {
+                servo_action::Action::TouchEnd(touch_end) => {
                     webview.notify_input_event(InputEvent::Touch(servo::TouchEvent::new(
                         servo::TouchEventType::Up,
                         servo::TouchId(0),
-                        Point2D::new(x as f32, y as f32),
+                        Point2D::new(touch_end.x as f32, touch_end.y as f32),
                     )));
                 }
-                ServoAction::TouchCancel(x, y) => {
+                servo_action::Action::TouchCancel(touch_cancel) => {
                     webview.notify_input_event(InputEvent::Touch(servo::TouchEvent::new(
                         servo::TouchEventType::Cancel,
                         servo::TouchId(0),
-                        Point2D::new(x as f32, y as f32),
+                        Point2D::new(touch_cancel.x as f32, touch_cancel.y as f32),
                     )));
                 }
-
-                ServoAction::Scroll(delta_x, delta_y) => {
+                servo_action::Action::Scroll(scroll) => {
                     // FIXME: 20 and 10 are random numbers that appear in
                     // winit_minimal. We should properly understand it and
                     // maybe add some constants
                     webview.notify_scroll_event(
                         ScrollLocation::Delta(LayoutVector2D::new(
-                            20.0 * delta_x as f32,
-                            20.0 * delta_y as f32,
+                            20.0 * scroll.dx as f32,
+                            20.0 * scroll.dy as f32,
                         )),
                         DeviceIntPoint::new(10, 10),
                     );
                 }
-                ServoAction::Shutdown => {
+                servo_action::Action::Shutdown(_) => {
                     servo.deinit();
                     break;
                 }
