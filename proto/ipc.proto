@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package servo_ipc;
+
+message ServoAction {
+  oneof action {
+    LoadUrl load_url = 1;
+    bool reload = 2;
+    bool go_back = 3;
+    bool go_forward = 4;
+    Resize resize = 5;
+    Motion motion = 6;
+    ButtonPress button_press = 7;
+    ButtonRelease button_release = 8;
+    KeyPress key_press = 9;
+    KeyRelease key_release = 10;
+    Scroll scroll = 11;
+    TouchBegin touch_begin = 12;
+    TouchUpdate touch_update = 13;
+    TouchEnd touch_end = 14;
+    TouchCancel touch_cancel = 15;
+    bool shutdown = 16;
+  }
+}
+
+message LoadUrl {
+  string url = 1;
+}
+
+message Resize {
+  uint32 width = 1;
+  uint32 height = 2;
+}
+
+message Motion {
+  double x = 1;
+  double y = 2;
+}
+
+message ButtonPress {
+  uint32 button = 1;
+  double x = 2;
+  double y = 3;
+}
+
+message ButtonRelease {
+  uint32 button = 1;
+  double x = 2;
+  double y = 3;
+}
+
+message KeyPress {
+  string key = 1;
+}
+
+message KeyRelease {
+  string key = 1;
+}
+
+message Scroll {
+  double dx = 1;
+  double dy = 2;
+}
+
+message TouchBegin {
+  double x = 1;
+  double y = 2;
+}
+
+message TouchUpdate {
+  double x = 1;
+  double y = 2;
+}
+
+message TouchEnd {
+  double x = 1;
+  double y = 2;
+}
+
+message TouchCancel {
+  double x = 1;
+  double y = 2;
+}
+
+message ServoEvent {
+  oneof event {
+    FrameReady frame_ready = 1;
+    CursorChanged cursor_changed = 2;
+    TitleChanged title_changed = 3;
+    UrlChanged url_changed = 4;
+    LoadStart load_start = 5;
+    LoadEnd load_end = 6;
+  }
+}
+
+message FrameReady {
+  bytes rgba_data = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+}
+
+message CursorChanged {
+  string cursor = 1;
+}
+
+message TitleChanged {
+  string title = 1;
+}
+
+message UrlChanged {
+  string url = 1;
+}
+
+message LoadStart {
+  string url = 1;
+}
+
+message LoadEnd {
+  string url = 1;
+}

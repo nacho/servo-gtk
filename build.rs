@@ -6,4 +6,6 @@ fn main() {
         "resources/gresource.xml",
         "resources.gresource",
     );
+
+    prost_build::compile_protos(&["proto/ipc.proto"], &["proto/"]).unwrap();
 }

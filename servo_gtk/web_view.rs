@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use crate::ipc::ServoEvent;
+use crate::proto_ipc::{ServoEvent, servo_event};
 use crate::servo_runner::ServoRunner;
 use glib::translate::*;
 use glib::{info, warn};
@@ -485,28 +485,35 @@ impl WebView {
     }
 
     fn process_servo_event(&self, event: ServoEvent) {
-        match event {
-            // FIXME: this is just a hack to get me going. Ideally we would
-            // use a DMA-Buf so we avoid movign the pixels from the GPU to
-            // system memory and back to the GPU
-            ServoEvent::FrameReady(data, width, height) => {
-                let rgba_image = RgbaImage::from_raw(width, height, data).unwrap();
-                let imp = self.imp();
+        if let Some(event_type) = event.event {
+            match event_type {
+                // FIXME: this is just a hack to get me going. Ideally we would
+                // use a DMA-Buf so we avoid movign the pixels from the GPU to
+                // system memory and back to the GPU
+                servo_event::Event::FrameReady(frame_ready) => {
+                    let rgba_image = RgbaImage::from_raw(
+                        frame_ready.width,
+                        frame_ready.height,
+                        frame_ready.rgba_data,
+                    )
+                    .unwrap();
+                    let imp = self.imp();
 
-                imp.last_image.replace(Some(rgba_image));
+                    imp.last_image.replace(Some(rgba_image));
 
-                if let Some(gl_area) = imp.gl_area.borrow().as_ref() {
-                    gl_area.queue_draw();
+                    if let Some(gl_area) = imp.gl_area.borrow().as_ref() {
+                        gl_area.queue_draw();
+                    }
                 }
-            }
-            ServoEvent::LoadComplete => {
-                info!("Page load complete");
-            }
-            ServoEvent::CursorChanged(cursor_name) => {
-                let gdk_cursor = gdk::Cursor::from_name(&cursor_name, None);
+                servo_event::Event::CursorChanged(cursor_changed) => {
+                    let gdk_cursor = gdk::Cursor::from_name(&cursor_changed.cursor, None);
 
-                if let Some(cursor) = gdk_cursor {
-                    self.set_cursor(Some(&cursor));
+                    if let Some(cursor) = gdk_cursor {
+                        self.set_cursor(Some(&cursor));
+                    }
+                }
+                _ => {
+                    // Handle other event types as needed
                 }
             }
         }
