@@ -11,7 +11,6 @@ use gtk::prelude::*;
 use gtk::{glib, subclass::prelude::*};
 use image::RgbaImage;
 use std::cell::RefCell;
-use std::ffi::CString;
 
 const G_LOG_DOMAIN: &str = "ServoGtk";
 
@@ -61,30 +60,24 @@ mod imp {
                         // Create shader program
                         let vertex_shader = gl::CreateShader(gl::VERTEX_SHADER);
                         let vertex_source = if area.uses_es() {
-                            CString::new(
-                                "#version 320 es\n\
-                                 precision highp float;\n\
-                                 layout (location = 0) in vec2 aPos;\n\
-                                 layout (location = 1) in vec2 aTexCoord;\n\
-                                 out vec2 TexCoord;\n\
-                                 void main() {\n\
-                                     gl_Position = vec4(aPos, 0.0, 1.0);\n\
-                                     TexCoord = aTexCoord;\n\
-                                 }",
-                            )
-                            .expect("Vertex source")
+                            cr"#version 320 es
+                                precision highp float;
+                                layout (location = 0) in vec2 aPos;
+                                layout (location = 1) in vec2 aTexCoord;
+                                out vec2 TexCoord;
+                                void main() {
+                                    gl_Position = vec4(aPos, 0.0, 1.0);
+                                    TexCoord = aTexCoord;
+                                }"
                         } else {
-                            CString::new(
-                                "#version 330 core\n\
-                                 layout (location = 0) in vec2 aPos;\n\
-                                 layout (location = 1) in vec2 aTexCoord;\n\
-                                 out vec2 TexCoord;\n\
-                                 void main() {\n\
-                                     gl_Position = vec4(aPos, 0.0, 1.0);\n\
-                                     TexCoord = aTexCoord;\n\
-                                 }",
-                            )
-                            .expect("Vertex source")
+                            cr"#version 330 core
+                                layout (location = 0) in vec2 aPos;
+                                layout (location = 1) in vec2 aTexCoord;
+                                out vec2 TexCoord;
+                                void main() {
+                                    gl_Position = vec4(aPos, 0.0, 1.0);
+                                    TexCoord = aTexCoord;
+                                }"
                         };
 
                         gl::ShaderSource(
@@ -109,28 +102,22 @@ mod imp {
 
                         let fragment_shader = gl::CreateShader(gl::FRAGMENT_SHADER);
                         let fragment_source = if area.uses_es() {
-                            CString::new(
-                                "#version 320 es\n\
-                                 precision highp float;\n\
-                                 out vec4 FragColor;\n\
-                                 in vec2 TexCoord;\n\
-                                 uniform sampler2D ourTexture;\n\
-                                 void main() {\n\
-                                     FragColor = texture(ourTexture, TexCoord);\n\
-                                 }",
-                            )
-                            .expect("Fragment source")
+                            cr"#version 320 es
+                                precision highp float;
+                                out vec4 FragColor;
+                                in vec2 TexCoord;
+                                uniform sampler2D ourTexture;
+                                void main() {
+                                    FragColor = texture(ourTexture, TexCoord);
+                                }"
                         } else {
-                            CString::new(
-                                "#version 330 core\n\
-                                 out vec4 FragColor;\n\
-                                 in vec2 TexCoord;\n\
-                                 uniform sampler2D ourTexture;\n\
-                                 void main() {\n\
-                                     FragColor = texture(ourTexture, TexCoord);\n\
-                                 }",
-                            )
-                            .expect("Fragment source")
+                            cr"#version 330 core
+                                out vec4 FragColor;
+                                in vec2 TexCoord;
+                                uniform sampler2D ourTexture;
+                                void main() {
+                                    FragColor = texture(ourTexture, TexCoord);
+                                }"
                         };
 
                         gl::ShaderSource(
@@ -485,36 +472,38 @@ impl WebView {
     }
 
     fn process_servo_event(&self, event: ServoEvent) {
-        if let Some(event_type) = event.event {
-            match event_type {
-                // FIXME: this is just a hack to get me going. Ideally we would
-                // use a DMA-Buf so we avoid movign the pixels from the GPU to
-                // system memory and back to the GPU
-                servo_event::Event::FrameReady(frame_ready) => {
-                    let rgba_image = RgbaImage::from_raw(
-                        frame_ready.width,
-                        frame_ready.height,
-                        frame_ready.rgba_data,
-                    )
-                    .unwrap();
-                    let imp = self.imp();
+        let Some(event_type) = event.event else {
+            return;
+        };
 
-                    imp.last_image.replace(Some(rgba_image));
+        match event_type {
+            // FIXME: this is just a hack to get me going. Ideally we would
+            // use a DMA-Buf so we avoid movign the pixels from the GPU to
+            // system memory and back to the GPU
+            servo_event::Event::FrameReady(frame_ready) => {
+                let rgba_image = RgbaImage::from_raw(
+                    frame_ready.width,
+                    frame_ready.height,
+                    frame_ready.rgba_data,
+                )
+                .unwrap();
+                let imp = self.imp();
 
-                    if let Some(gl_area) = imp.gl_area.borrow().as_ref() {
-                        gl_area.queue_draw();
-                    }
-                }
-                servo_event::Event::CursorChanged(cursor_changed) => {
-                    let gdk_cursor = gdk::Cursor::from_name(&cursor_changed.cursor, None);
+                imp.last_image.replace(Some(rgba_image));
 
-                    if let Some(cursor) = gdk_cursor {
-                        self.set_cursor(Some(&cursor));
-                    }
+                if let Some(gl_area) = imp.gl_area.borrow().as_ref() {
+                    gl_area.queue_draw();
                 }
-                _ => {
-                    // Handle other event types as needed
+            }
+            servo_event::Event::CursorChanged(cursor_changed) => {
+                let gdk_cursor = gdk::Cursor::from_name(&cursor_changed.cursor, None);
+
+                if let Some(cursor) = gdk_cursor {
+                    self.set_cursor(Some(&cursor));
                 }
+            }
+            _ => {
+                // Handle other event types as needed
             }
         }
     }
