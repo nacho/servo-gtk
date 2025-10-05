@@ -34,7 +34,7 @@ impl ResourceReaderMethods for ResourceReaderInstance {
         let path = format!("/com/servo-gtk/{}", res.filename());
 
         let bytes = gio::resources_lookup_data(&path, gio::ResourceLookupFlags::NONE)
-            .unwrap_or_else(|_| panic!("Failed to read resource {}", path));
+            .unwrap_or_else(|_| panic!("Failed to read resource {path}"));
         bytes.to_vec()
     }
 

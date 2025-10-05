@@ -8,7 +8,7 @@ use gtk::{Application, ApplicationWindow, Box, Entry, Orientation, glib};
 use servo_gtk::WebView;
 use std::ptr;
 
-const G_LOG_DOMAIN: &str = "ServoGtk";
+const G_LOG_DOMAIN: &str = "ServoGtkBrowser";
 
 const LOGGER: glib::GlibLogger = glib::GlibLogger::new(
     glib::GlibLoggerFormat::Plain,
