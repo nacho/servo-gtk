@@ -5,9 +5,32 @@
 use async_channel;
 use gio::prelude::*;
 use gio::{OutputStream, Subprocess, SubprocessFlags, SubprocessLauncher};
+use glib::{debug, error, info, warn};
 use std::ffi::OsStr;
 
 use crate::proto_ipc::{ServoAction, ServoEvent, servo_action};
+
+const G_LOG_DOMAIN: &str = "ServoGtk";
+
+#[derive(Debug, Clone, Copy)]
+pub enum LogLevel {
+    Debug = 0,
+    Info = 1,
+    Warn = 2,
+    Error = 3,
+}
+
+impl From<i32> for LogLevel {
+    fn from(value: i32) -> Self {
+        match value {
+            0 => LogLevel::Debug,
+            1 => LogLevel::Info,
+            2 => LogLevel::Warn,
+            3 => LogLevel::Error,
+            _ => LogLevel::Info,
+        }
+    }
+}
 
 pub struct ServoRunner {
     stdin: OutputStream,
@@ -222,6 +245,15 @@ impl ServoRunner {
         self.send_action(ServoAction {
             action: Some(servo_action::Action::Shutdown(true)),
         });
+    }
+
+    pub fn handle_log_message(&self, level: LogLevel, message: &str) {
+        match level {
+            LogLevel::Debug => debug!("{}", message),
+            LogLevel::Info => info!("{}", message),
+            LogLevel::Warn => warn!("{}", message),
+            LogLevel::Error => error!("{}", message),
+        }
     }
 }
 

@@ -23,9 +23,37 @@ use std::thread;
 use url::Url;
 
 use servo_gtk::proto_ipc::{
-    CursorChanged, FrameReady, ServoAction, ServoEvent, servo_action, servo_event,
+    CursorChanged, FrameReady, LogLevel, LogMessage, ServoAction, ServoEvent, servo_action,
+    servo_event,
 };
 use servo_gtk::resources::ResourceReaderInstance;
+
+struct EventLogger;
+
+impl log::Log for EventLogger {
+    fn enabled(&self, _metadata: &log::Metadata) -> bool {
+        true
+    }
+
+    fn log(&self, record: &log::Record) {
+        let level = match record.level() {
+            log::Level::Error => LogLevel::Error,
+            log::Level::Warn => LogLevel::Warn,
+            log::Level::Info => LogLevel::Info,
+            log::Level::Debug => LogLevel::Debug,
+            log::Level::Trace => LogLevel::Debug,
+        };
+        let event = ServoEvent {
+            event: Some(servo_event::Event::LogMessage(LogMessage {
+                level: level as i32,
+                message: format!("{}", record.args()),
+            })),
+        };
+        send_event(event);
+    }
+
+    fn flush(&self) {}
+}
 
 fn send_event(event: ServoEvent) {
     let encoded = event.encode_to_vec();
@@ -148,8 +176,13 @@ fn spawn_stdin_channel() -> Receiver<ServoAction> {
 }
 
 fn main() {
+    log::set_logger(&EventLogger).expect("Failed to set logger");
+    log::set_max_level(log::LevelFilter::Debug);
+
     init_crypto();
     resources::set(Box::new(ResourceReaderInstance::new()));
+
+    log::info!("Starting servo runner");
 
     let size = PhysicalSize::new(800, 600);
     let rendering_context = Rc::new(
@@ -172,20 +205,25 @@ fn main() {
         {
             match action_type {
                 servo_action::Action::LoadUrl(load_url) => {
+                    log::info!("Loading URL: {}", load_url.url);
                     if let Ok(parsed_url) = Url::parse(&load_url.url) {
                         webview.load(parsed_url);
                     }
                 }
                 servo_action::Action::Reload(_) => {
+                    log::info!("Reloading page");
                     webview.reload();
                 }
                 servo_action::Action::GoBack(_) => {
+                    log::info!("Going back");
                     let _ = webview.go_back(1);
                 }
                 servo_action::Action::GoForward(_) => {
+                    log::info!("Going forward");
                     let _ = webview.go_forward(1);
                 }
                 servo_action::Action::Resize(resize) => {
+                    log::debug!("Resizing to {}x{}", resize.width, resize.height);
                     webview.move_resize(DeviceRect::from_origin_and_size(
                         Point2D::origin(),
                         Size2D::new(resize.width as f32, resize.height as f32),
@@ -193,11 +231,18 @@ fn main() {
                     webview.resize(PhysicalSize::new(resize.width, resize.height));
                 }
                 servo_action::Action::Motion(motion) => {
+                    log::debug!("Mouse motion: ({}, {})", motion.x, motion.y);
                     webview.notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(
                         Point2D::new(motion.x as f32, motion.y as f32),
                     )));
                 }
                 servo_action::Action::ButtonPress(button_press) => {
+                    log::debug!(
+                        "Button press: button {} at ({}, {})",
+                        button_press.button,
+                        button_press.x,
+                        button_press.y
+                    );
                     let mouse_button = match button_press.button {
                         1 => MouseButton::Left,
                         2 => MouseButton::Middle,
@@ -211,6 +256,12 @@ fn main() {
                     )));
                 }
                 servo_action::Action::ButtonRelease(button_release) => {
+                    log::debug!(
+                        "Button release: button {} at ({}, {})",
+                        button_release.button,
+                        button_release.x,
+                        button_release.y
+                    );
                     let mouse_button = match button_release.button {
                         1 => MouseButton::Left,
                         2 => MouseButton::Middle,
@@ -224,16 +275,19 @@ fn main() {
                     )));
                 }
                 servo_action::Action::KeyPress(key_press) => {
+                    log::debug!("Key press: {}", key_press.key);
                     let key = Key::Character(key_press.key);
                     let key_event = KeyboardEvent::from_state_and_key(KeyState::Down, key);
                     webview.notify_input_event(InputEvent::Keyboard(key_event));
                 }
                 servo_action::Action::KeyRelease(key_release) => {
+                    log::debug!("Key release: {}", key_release.key);
                     let key = Key::Character(key_release.key);
                     let key_event = KeyboardEvent::from_state_and_key(KeyState::Up, key);
                     webview.notify_input_event(InputEvent::Keyboard(key_event));
                 }
                 servo_action::Action::TouchBegin(touch_begin) => {
+                    log::debug!("Touch begin at ({}, {})", touch_begin.x, touch_begin.y);
                     webview.notify_input_event(InputEvent::Touch(servo::TouchEvent::new(
                         servo::TouchEventType::Down,
                         servo::TouchId(0),
@@ -241,6 +295,7 @@ fn main() {
                     )));
                 }
                 servo_action::Action::TouchUpdate(touch_update) => {
+                    log::debug!("Touch update at ({}, {})", touch_update.x, touch_update.y);
                     webview.notify_input_event(InputEvent::Touch(servo::TouchEvent::new(
                         servo::TouchEventType::Move,
                         servo::TouchId(0),
@@ -248,6 +303,7 @@ fn main() {
                     )));
                 }
                 servo_action::Action::TouchEnd(touch_end) => {
+                    log::debug!("Touch end at ({}, {})", touch_end.x, touch_end.y);
                     webview.notify_input_event(InputEvent::Touch(servo::TouchEvent::new(
                         servo::TouchEventType::Up,
                         servo::TouchId(0),
@@ -255,6 +311,7 @@ fn main() {
                     )));
                 }
                 servo_action::Action::TouchCancel(touch_cancel) => {
+                    log::debug!("Touch cancel at ({}, {})", touch_cancel.x, touch_cancel.y);
                     webview.notify_input_event(InputEvent::Touch(servo::TouchEvent::new(
                         servo::TouchEventType::Cancel,
                         servo::TouchId(0),
@@ -262,6 +319,7 @@ fn main() {
                     )));
                 }
                 servo_action::Action::Scroll(scroll) => {
+                    log::debug!("Scroll: dx={}, dy={}", scroll.dx, scroll.dy);
                     // FIXME: 20 and 10 are random numbers that appear in
                     // winit_minimal. We should properly understand it and
                     // maybe add some constants
@@ -274,6 +332,7 @@ fn main() {
                     );
                 }
                 servo_action::Action::Shutdown(_) => {
+                    log::info!("Shutting down servo");
                     servo.deinit();
                     break;
                 }

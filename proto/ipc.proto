@@ -90,6 +90,7 @@ message ServoEvent {
     UrlChanged url_changed = 4;
     LoadStart load_start = 5;
     LoadEnd load_end = 6;
+    LogMessage log_message = 7;
   }
 }
 
@@ -117,4 +118,16 @@ message LoadStart {
 
 message LoadEnd {
   string url = 1;
+}
+
+enum LogLevel {
+  DEBUG = 0;
+  INFO = 1;
+  WARN = 2;
+  ERROR = 3;
+}
+
+message LogMessage {
+  LogLevel level = 1;
+  string message = 2;
 }
