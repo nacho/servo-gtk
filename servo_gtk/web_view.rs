@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use crate::proto_ipc::{ServoEvent, servo_event};
-use crate::servo_runner::ServoRunner;
+use crate::servo_runner::{LogLevel, ServoRunner};
 use glib::translate::*;
 use glib::{info, warn};
 use gtk::gdk;
@@ -500,6 +500,13 @@ impl WebView {
 
                 if let Some(cursor) = gdk_cursor {
                     self.set_cursor(Some(&cursor));
+                }
+            }
+            servo_event::Event::LogMessage(log_msg) => {
+                // Process log message and forward to servo_runner
+                if let Some(servo_runner) = self.imp().servo_runner.borrow().as_ref() {
+                    servo_runner
+                        .handle_log_message(LogLevel::from(log_msg.level), &log_msg.message);
                 }
             }
             _ => {
