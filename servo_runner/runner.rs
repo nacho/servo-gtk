@@ -30,7 +30,16 @@ use servo_gtk::proto_ipc::{
 mod resource_reader;
 use resource_reader::ResourceReaderInstance;
 
-struct EventLogger;
+struct EventLogger {
+    sender: std::sync::mpsc::Sender<LogMessage>,
+}
+
+impl EventLogger {
+    fn new() -> (Self, std::sync::mpsc::Receiver<LogMessage>) {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        (Self { sender }, receiver)
+    }
+}
 
 impl log::Log for EventLogger {
     fn enabled(&self, _metadata: &log::Metadata) -> bool {
@@ -45,13 +54,13 @@ impl log::Log for EventLogger {
             log::Level::Debug => LogLevel::Debug,
             log::Level::Trace => LogLevel::Debug,
         };
-        let event = ServoEvent {
-            event: Some(servo_event::Event::LogMessage(LogMessage {
-                level: level as i32,
-                message: format!("{}", record.args()),
-            })),
+
+        let log_message = LogMessage {
+            level: level as i32,
+            message: format!("{}", record.args()),
         };
-        let _ = send_event(event);
+
+        let _ = self.sender.send(log_message);
     }
 
     fn flush(&self) {}
@@ -178,7 +187,9 @@ fn spawn_stdin_channel() -> Receiver<ServoAction> {
 }
 
 fn main() {
-    log::set_logger(&EventLogger).expect("Failed to set logger");
+    let (event_logger, log_receiver) = EventLogger::new();
+
+    log::set_logger(Box::leak(Box::new(event_logger))).expect("Failed to set logger");
     log::set_max_level(log::LevelFilter::Debug);
 
     init_crypto();
@@ -202,6 +213,14 @@ fn main() {
     let receiver = spawn_stdin_channel();
 
     loop {
+        // Process queued log messages
+        while let Ok(log_message) = log_receiver.try_recv() {
+            let event = ServoEvent {
+                event: Some(servo_event::Event::LogMessage(log_message)),
+            };
+            let _ = send_event(event);
+        }
+
         if let Ok(action) = receiver.try_recv()
             && let Some(action_type) = action.action
         {
