@@ -49,18 +49,18 @@ impl log::Log for EventLogger {
                 message: format!("{}", record.args()),
             })),
         };
-        send_event(event);
+        let _ = send_event(event);
     }
 
     fn flush(&self) {}
 }
 
-fn send_event(event: ServoEvent) {
+fn send_event(event: ServoEvent) -> std::io::Result<()> {
     let encoded = event.encode_to_vec();
     let len = (encoded.len() as u32).to_le_bytes();
-    io::stdout().write_all(&len).unwrap();
-    io::stdout().write_all(&encoded).unwrap();
-    io::stdout().flush().unwrap();
+    io::stdout().write_all(&len)?;
+    io::stdout().write_all(&encoded)?;
+    io::stdout().flush()
 }
 
 struct ServoWebViewDelegate {
@@ -92,7 +92,7 @@ impl WebViewDelegate for ServoWebViewDelegate {
                     height,
                 })),
             };
-            send_event(event);
+            let _ = send_event(event);
         }
     }
 
@@ -139,7 +139,7 @@ impl WebViewDelegate for ServoWebViewDelegate {
                 cursor: cursor_str.to_string(),
             })),
         };
-        send_event(event);
+        let _ = send_event(event);
     }
 }
 
