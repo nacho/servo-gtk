@@ -3,7 +3,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 pub mod proto_ipc;
-pub mod resources;
 pub mod servo_runner;
 pub mod web_view;
 

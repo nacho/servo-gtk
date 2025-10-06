@@ -26,7 +26,9 @@ use servo_gtk::proto_ipc::{
     CursorChanged, FrameReady, LogLevel, LogMessage, ServoAction, ServoEvent, servo_action,
     servo_event,
 };
-use servo_gtk::resources::ResourceReaderInstance;
+
+mod resource_reader;
+use resource_reader::ResourceReaderInstance;
 
 struct EventLogger;
 
