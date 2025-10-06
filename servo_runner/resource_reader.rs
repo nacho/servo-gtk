@@ -7,7 +7,7 @@ use glib::Bytes;
 use servo::resources::{Resource as ServoResource, ResourceReaderMethods};
 use std::path::PathBuf;
 
-pub struct ResourceReaderInstance;
+pub(crate) struct ResourceReaderInstance;
 
 impl Default for ResourceReaderInstance {
     fn default() -> Self {
@@ -16,7 +16,7 @@ impl Default for ResourceReaderInstance {
 }
 
 impl ResourceReaderInstance {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let resource_data = include_bytes!(concat!(env!("OUT_DIR"), "/resources.gresource"));
         let bytes = Bytes::from_static(resource_data);
         let resource = Resource::from_data(&bytes).expect("Failed to load gresource");
