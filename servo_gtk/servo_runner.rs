@@ -7,6 +7,7 @@ use gio::prelude::*;
 use gio::{OutputStream, Subprocess, SubprocessFlags, SubprocessLauncher};
 use glib::{debug, error, info, warn};
 use std::ffi::OsStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::proto_ipc::{ServoAction, ServoEvent, servo_action};
 
@@ -36,13 +37,17 @@ pub struct ServoRunner {
     stdin: OutputStream,
     event_receiver: async_channel::Receiver<ServoEvent>,
     _subprocess: Subprocess,
+    is_shutdown: AtomicBool,
 }
 
 #[allow(clippy::new_without_default)]
 impl ServoRunner {
     pub fn new() -> Self {
+        info!("Creating new ServoRunner");
         let launcher =
             SubprocessLauncher::new(SubprocessFlags::STDIN_PIPE | SubprocessFlags::STDOUT_PIPE);
+        
+        info!("Spawning servo-runner subprocess");
         let subprocess = launcher
             .spawn(&[
                 OsStr::new("cargo"),
@@ -52,16 +57,20 @@ impl ServoRunner {
             ])
             .expect("Failed to spawn servo-runner process");
 
+        info!("Servo-runner subprocess spawned successfully");
         let stdin = subprocess.stdin_pipe().expect("Failed to get stdin");
         let stdout = subprocess.stdout_pipe().expect("Failed to get stdout");
 
         let (event_sender, event_receiver) = async_channel::unbounded();
 
+        info!("Starting IPC event reader task");
         // Async task to receive events from process
         glib::spawn_future_local(glib::clone!(
             #[strong]
             stdout,
             async move {
+                debug!("IPC event reader task started");
+                let mut message_count = 0u64;
                 loop {
                     // Read 4-byte length prefix
                     let len_buf = vec![0u8; 4];
@@ -69,10 +78,22 @@ impl ServoRunner {
                         .read_all_future(len_buf, glib::Priority::DEFAULT)
                         .await
                     {
-                        Ok((len_buf, _, _)) => {
+                        Ok((len_buf, bytes_read, _)) => {
+                            if bytes_read != 4 {
+                                error!("Expected 4 bytes for length prefix, got {}", bytes_read);
+                                break;
+                            }
+                            
                             let len = u32::from_le_bytes([
                                 len_buf[0], len_buf[1], len_buf[2], len_buf[3],
                             ]) as usize;
+                            
+                            debug!("Reading message #{} of {} bytes", message_count + 1, len);
+
+                            if len > 10_000_000 { // 10MB sanity check
+                                error!("Message length {} is suspiciously large, breaking", len);
+                                break;
+                            }
 
                             // Read message data
                             let msg_buf = vec![0u8; len];
@@ -80,40 +101,77 @@ impl ServoRunner {
                                 .read_all_future(msg_buf, glib::Priority::DEFAULT)
                                 .await
                             {
-                                Ok((msg_buf, _, _)) => {
-                                    if let Ok(event) = ServoEvent::decode_from_slice(&msg_buf)
-                                        && event_sender.send(event).await.is_err()
-                                    {
+                                Ok((msg_buf, bytes_read, _)) => {
+                                    if bytes_read != len {
+                                        error!("Expected {} bytes for message, got {}", len, bytes_read);
                                         break;
                                     }
+                                    
+                                    match ServoEvent::decode_from_slice(&msg_buf) {
+                                        Ok(event) => {
+                                            message_count += 1;
+                                            debug!("Successfully decoded message #{}", message_count);
+                                            if event_sender.send(event).await.is_err() {
+                                                warn!("Event receiver dropped, stopping IPC reader");
+                                                break;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("Failed to decode protobuf message: {:?}", e);
+                                            break;
+                                        }
+                                    }
                                 }
-                                Err(_) => break,
+                                Err(e) => {
+                                    error!("Failed to read message data: {:?}", e);
+                                    break;
+                                }
                             }
                         }
-                        Err(_) => break,
+                        Err(e) => {
+                            error!("Failed to read length prefix: {:?}", e);
+                            break;
+                        }
                     }
                 }
+                error!("IPC event reader task ended after {} messages", message_count);
             }
         ));
 
+        info!("ServoRunner created successfully");
         Self {
             stdin,
             event_receiver,
             _subprocess: subprocess,
+            is_shutdown: AtomicBool::new(false),
         }
     }
 
     fn send_action(&self, action: ServoAction) {
+        if self.is_shutdown.load(Ordering::Relaxed) {
+            warn!("Attempted to send action after shutdown");
+            return;
+        }
+        
+        let action_type = action.action.as_ref().map(|a| std::mem::discriminant(a));
+        debug!("Sending action: {:?}", action_type);
+        
         let stdin = self.stdin.clone();
         glib::spawn_future_local(async move {
             let encoded = action.encode_to_vec();
             let len = (encoded.len() as u32).to_le_bytes();
-            let _ = stdin
-                .write_all_future(len.to_vec(), glib::Priority::DEFAULT)
-                .await;
-            let _ = stdin
-                .write_all_future(encoded, glib::Priority::DEFAULT)
-                .await;
+            
+            debug!("Writing action: {} bytes total", encoded.len() + 4);
+            
+            match stdin.write_all_future(len.to_vec(), glib::Priority::DEFAULT).await {
+                Ok(_) => {
+                    match stdin.write_all_future(encoded, glib::Priority::DEFAULT).await {
+                        Ok(_) => debug!("Action sent successfully"),
+                        Err(e) => error!("Failed to write action data: {:?}", e),
+                    }
+                }
+                Err(e) => error!("Failed to write action length: {:?}", e),
+            }
         });
     }
 
@@ -122,6 +180,7 @@ impl ServoRunner {
     }
 
     pub fn load_url(&self, url: &str) {
+        info!("ServoRunner: Loading URL: {}", url);
         self.send_action(ServoAction {
             action: Some(servo_action::Action::LoadUrl(crate::proto_ipc::LoadUrl {
                 url: url.to_string(),
@@ -242,6 +301,13 @@ impl ServoRunner {
     }
 
     pub fn shutdown(&self) {
+        if self.is_shutdown.load(Ordering::Relaxed) {
+            warn!("Shutdown called multiple times");
+            return;
+        }
+        
+        info!("ServoRunner: Sending shutdown command");
+        self.is_shutdown.store(true, Ordering::Relaxed);
         self.send_action(ServoAction {
             action: Some(servo_action::Action::Shutdown(true)),
         });
@@ -259,6 +325,7 @@ impl ServoRunner {
 
 impl Drop for ServoRunner {
     fn drop(&mut self) {
+        info!("ServoRunner being dropped, sending shutdown");
         self.shutdown();
     }
 }

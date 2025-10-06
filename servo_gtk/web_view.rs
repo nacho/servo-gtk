@@ -4,7 +4,7 @@
 
 use crate::proto_ipc::{ServoEvent, servo_event};
 use crate::servo_runner::{LogLevel, ServoRunner};
-use glib::info;
+use glib::{debug, error, info, warn};
 use glib::translate::*;
 use gtk::gdk;
 use gtk::prelude::*;
@@ -34,20 +34,28 @@ mod imp {
         fn constructed(&self) {
             self.parent_constructed();
 
+            info!("Constructing WebView widget");
             let servo_runner = ServoRunner::new();
             let event_receiver = servo_runner.event_receiver();
 
             self.servo_runner.replace(Some(servo_runner));
 
             let obj_weak = self.obj().downgrade();
+            info!("Starting servo event processing loop");
             glib::spawn_future_local(async move {
+                debug!("Servo event receiver loop started");
+                let mut event_count = 0u64;
                 while let Ok(event) = event_receiver.recv().await {
+                    event_count += 1;
+                    debug!("Received servo event #{}, type: {:?}", event_count, event.event.as_ref().map(|e| std::mem::discriminant(e)));
                     if let Some(obj) = obj_weak.upgrade() {
                         obj.process_servo_event(event);
                     } else {
+                        warn!("WebView object dropped, stopping event processing loop after {} events", event_count);
                         break;
                     }
                 }
+                error!("Servo event receiver loop ended unexpectedly after {} events", event_count);
             });
 
             // Event controllers
@@ -57,8 +65,13 @@ mod imp {
                 if let Some(obj) = obj_weak.upgrade() {
                     let imp = obj.imp();
                     if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+                        debug!("Motion event: ({:.2}, {:.2})", x, y);
                         servo.motion(x, y);
+                    } else {
+                        warn!("Motion event received but servo_runner is None");
                     }
+                } else {
+                    warn!("Motion event received but WebView object is dropped");
                 }
             });
             self.obj().add_controller(motion_controller);
@@ -68,39 +81,57 @@ mod imp {
             legacy_controller.connect_event(move |controller, event| {
                 if let Some(obj) = obj_weak.upgrade() {
                     let imp = obj.imp();
-                    if let Some(servo) = imp.servo_runner.borrow().as_ref()
-                        && let Some((x, y)) = obj.translate_event_coordinates(event)
-                    {
-                        match event.event_type() {
-                            gdk::EventType::ButtonPress => {
-                                if let Some(button_event) = event.downcast_ref::<gdk::ButtonEvent>()
-                                {
-                                    servo.button_press(button_event.button(), x, y);
+                    if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+                        if let Some((x, y)) = obj.translate_event_coordinates(event) {
+                            match event.event_type() {
+                                gdk::EventType::ButtonPress => {
+                                    if let Some(button_event) = event.downcast_ref::<gdk::ButtonEvent>()
+                                    {
+                                        debug!("Button press: button {} at ({:.2}, {:.2})", button_event.button(), x, y);
+                                        servo.button_press(button_event.button(), x, y);
+                                    } else {
+                                        warn!("ButtonPress event could not be downcast to ButtonEvent");
+                                    }
+                                    controller.widget().expect("Controller widget").grab_focus();
                                 }
-                                controller.widget().expect("Controller widget").grab_focus();
-                            }
-                            gdk::EventType::ButtonRelease => {
-                                if let Some(button_event) = event.downcast_ref::<gdk::ButtonEvent>()
-                                {
-                                    servo.button_release(button_event.button(), x, y);
+                                gdk::EventType::ButtonRelease => {
+                                    if let Some(button_event) = event.downcast_ref::<gdk::ButtonEvent>()
+                                    {
+                                        debug!("Button release: button {} at ({:.2}, {:.2})", button_event.button(), x, y);
+                                        servo.button_release(button_event.button(), x, y);
+                                    } else {
+                                        warn!("ButtonRelease event could not be downcast to ButtonEvent");
+                                    }
+                                }
+                                gdk::EventType::TouchBegin => {
+                                    debug!("Touch begin at ({:.2}, {:.2})", x, y);
+                                    servo.touch_begin(x, y);
+                                    controller.widget().expect("Controller widget").grab_focus();
+                                }
+                                gdk::EventType::TouchUpdate => {
+                                    debug!("Touch update at ({:.2}, {:.2})", x, y);
+                                    servo.touch_update(x, y);
+                                }
+                                gdk::EventType::TouchEnd => {
+                                    debug!("Touch end at ({:.2}, {:.2})", x, y);
+                                    servo.touch_end(x, y);
+                                }
+                                gdk::EventType::TouchCancel => {
+                                    debug!("Touch cancel at ({:.2}, {:.2})", x, y);
+                                    servo.touch_cancel(x, y);
+                                }
+                                _ => {
+                                    debug!("Unhandled legacy event type: {:?}", event.event_type());
                                 }
                             }
-                            gdk::EventType::TouchBegin => {
-                                servo.touch_begin(x, y);
-                                controller.widget().expect("Controller widget").grab_focus();
-                            }
-                            gdk::EventType::TouchUpdate => {
-                                servo.touch_update(x, y);
-                            }
-                            gdk::EventType::TouchEnd => {
-                                servo.touch_end(x, y);
-                            }
-                            gdk::EventType::TouchCancel => {
-                                servo.touch_cancel(x, y);
-                            }
-                            _ => {}
+                        } else {
+                            warn!("Failed to translate event coordinates for {:?}", event.event_type());
                         }
+                    } else {
+                        warn!("Legacy event received but servo_runner is None");
                     }
+                } else {
+                    warn!("Legacy event received but WebView object is dropped");
                 }
                 glib::Propagation::Proceed
             });
@@ -111,12 +142,18 @@ mod imp {
             key_controller.connect_key_pressed(move |_, keyval, _keycode, _state| {
                 if let Some(obj) = obj_weak.upgrade() {
                     let imp = obj.imp();
-                    if let Some(servo) = imp.servo_runner.borrow().as_ref()
-                        && let Some(unicode) = keyval.to_unicode()
-                    {
-                        info!("Pressed key {unicode}");
-                        servo.key_press(unicode);
+                    if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+                        if let Some(unicode) = keyval.to_unicode() {
+                            debug!("Key pressed: '{}' (keyval: {}, keycode: {})", unicode, keyval, _keycode);
+                            servo.key_press(unicode);
+                        } else {
+                            debug!("Key pressed but no unicode: keyval: {}, keycode: {}", keyval, _keycode);
+                        }
+                    } else {
+                        warn!("Key press received but servo_runner is None");
                     }
+                } else {
+                    warn!("Key press received but WebView object is dropped");
                 }
                 glib::Propagation::Proceed
             });
@@ -124,11 +161,18 @@ mod imp {
             key_controller.connect_key_released(move |_, keyval, _keycode, _state| {
                 if let Some(obj) = obj_weak.upgrade() {
                     let imp = obj.imp();
-                    if let Some(servo) = imp.servo_runner.borrow().as_ref()
-                        && let Some(unicode) = keyval.to_unicode()
-                    {
-                        servo.key_release(unicode);
+                    if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+                        if let Some(unicode) = keyval.to_unicode() {
+                            debug!("Key released: '{}' (keyval: {}, keycode: {})", unicode, keyval, _keycode);
+                            servo.key_release(unicode);
+                        } else {
+                            debug!("Key released but no unicode: keyval: {}, keycode: {}", keyval, _keycode);
+                        }
+                    } else {
+                        warn!("Key release received but servo_runner is None");
                     }
+                } else {
+                    warn!("Key release received but WebView object is dropped");
                 }
             });
             self.obj().add_controller(key_controller);
@@ -140,8 +184,13 @@ mod imp {
                 if let Some(obj) = obj_weak.upgrade() {
                     let imp = obj.imp();
                     if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+                        debug!("Scroll event: dx={:.2}, dy={:.2}", delta_x, delta_y);
                         servo.scroll(delta_x, delta_y);
+                    } else {
+                        warn!("Scroll event received but servo_runner is None");
                     }
+                } else {
+                    warn!("Scroll event received but WebView object is dropped");
                 }
                 glib::Propagation::Stop
             });
@@ -152,8 +201,12 @@ mod imp {
         }
 
         fn dispose(&self) {
+            info!("Disposing WebView");
             if let Some(servo) = self.servo_runner.borrow().as_ref() {
+                info!("Shutting down servo runner");
                 servo.shutdown();
+            } else {
+                warn!("WebView disposed but servo_runner was already None");
             }
         }
     }
@@ -172,8 +225,11 @@ mod imp {
         }
 
         fn size_allocate(&self, width: i32, height: i32, _baseline: i32) {
+            debug!("WebView size allocate: {}x{}", width, height);
             if let Some(servo) = self.servo_runner.borrow().as_ref() {
                 servo.resize(width as u32, height as u32);
+            } else {
+                warn!("Size allocate called but servo_runner is None");
             }
         }
     }
@@ -192,9 +248,12 @@ impl WebView {
     }
 
     pub fn load_url(&self, url: &str) {
+        info!("Loading URL: {}", url);
         let imp = self.imp();
         if let Some(servo) = imp.servo_runner.borrow().as_ref() {
             servo.load_url(url);
+        } else {
+            error!("Cannot load URL '{}' - servo_runner is None", url);
         }
     }
 
@@ -236,46 +295,63 @@ impl WebView {
 
     fn process_servo_event(&self, event: ServoEvent) {
         let Some(event_type) = event.event else {
+            warn!("Received servo event with no event type");
             return;
         };
 
         match event_type {
             servo_event::Event::FrameReady(frame_ready) => {
-                let rgba_image = RgbaImage::from_raw(
+                debug!("Processing FrameReady event: {}x{}, {} bytes", 
+                       frame_ready.width, frame_ready.height, frame_ready.rgba_data.len());
+                
+                let rgba_bytes_len = frame_ready.rgba_data.len();
+
+                match RgbaImage::from_raw(
                     frame_ready.width,
                     frame_ready.height,
                     frame_ready.rgba_data,
-                )
-                .unwrap();
+                ) {
+                    Some(rgba_image) => {
+                        let imp = self.imp();
 
-                let imp = self.imp();
+                        let bytes = glib::Bytes::from(&rgba_image.as_raw()[..]);
+                        let texture = gdk::MemoryTexture::new(
+                            rgba_image.width() as i32,
+                            rgba_image.height() as i32,
+                            gdk::MemoryFormat::R8g8b8a8,
+                            &bytes,
+                            (rgba_image.width() * 4) as usize,
+                        );
 
-                let bytes = glib::Bytes::from(&rgba_image.as_raw()[..]);
-                let texture = gdk::MemoryTexture::new(
-                    rgba_image.width() as i32,
-                    rgba_image.height() as i32,
-                    gdk::MemoryFormat::R8g8b8a8,
-                    &bytes,
-                    (rgba_image.width() * 4) as usize,
-                );
-
-                imp.memory_texture.replace(Some(texture));
-                self.queue_draw();
+                        imp.memory_texture.replace(Some(texture));
+                        self.queue_draw();
+                        debug!("Frame texture updated and draw queued");
+                    }
+                    None => {
+                        error!("Failed to create RgbaImage from frame data: {}x{}, {} bytes", 
+                               frame_ready.width, frame_ready.height, rgba_bytes_len);
+                    }
+                }
             }
             servo_event::Event::CursorChanged(cursor_changed) => {
+                debug!("Cursor changed to: {}", cursor_changed.cursor);
                 let gdk_cursor = gdk::Cursor::from_name(&cursor_changed.cursor, None);
                 if let Some(cursor) = gdk_cursor {
                     self.set_cursor(Some(&cursor));
+                } else {
+                    warn!("Failed to create GDK cursor for: {}", cursor_changed.cursor);
                 }
             }
             servo_event::Event::LogMessage(log_msg) => {
                 if let Some(servo_runner) = self.imp().servo_runner.borrow().as_ref() {
                     servo_runner
                         .handle_log_message(LogLevel::from(log_msg.level), &log_msg.message);
+                } else {
+                    warn!("Received log message but servo_runner is None: {}", log_msg.message);
                 }
             }
             _ => {
-                info!("Unhandled event type: {:?}", event_type);
+                debug!("Unhandled event type: {:?}", event_type);
             }
         }
     }

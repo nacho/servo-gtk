@@ -67,11 +67,38 @@ impl log::Log for EventLogger {
 }
 
 fn send_event(event: ServoEvent) -> std::io::Result<()> {
+    let event_type = event.event.as_ref().map(|e| std::mem::discriminant(e));
     let encoded = event.encode_to_vec();
     let len = (encoded.len() as u32).to_le_bytes();
-    io::stdout().write_all(&len)?;
-    io::stdout().write_all(&encoded)?;
-    io::stdout().flush()
+    
+    log::trace!("Sending event {:?}: {} bytes", event_type, encoded.len());
+    
+    match io::stdout().write_all(&len) {
+        Ok(_) => {
+            match io::stdout().write_all(&encoded) {
+                Ok(_) => {
+                    match io::stdout().flush() {
+                        Ok(_) => {
+                            log::trace!("Event sent successfully");
+                            Ok(())
+                        }
+                        Err(e) => {
+                            log::error!("Failed to flush stdout: {:?}", e);
+                            Err(e)
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to write event data: {:?}", e);
+                    Err(e)
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("Failed to write event length: {:?}", e);
+            Err(e)
+        }
+    }
 }
 
 struct ServoWebViewDelegate {
@@ -86,24 +113,35 @@ impl ServoWebViewDelegate {
 
 impl WebViewDelegate for ServoWebViewDelegate {
     fn notify_new_frame_ready(&self, webview: WebView) {
+        log::trace!("Frame ready notification received");
         let size = self.rendering_context.size2d().to_i32();
         let viewport_rect = DeviceIntRect::from_origin_and_size(Point2D::origin(), size);
+        
+        log::trace!("Painting webview frame: {}x{}", size.width, size.height);
         webview.paint();
         self.rendering_context.present();
 
-        if let Some(rgba_image) = self.rendering_context.read_to_image(viewport_rect) {
-            let width = rgba_image.width();
-            let height = rgba_image.height();
-            let data = rgba_image.into_raw();
+        match self.rendering_context.read_to_image(viewport_rect) {
+            Some(rgba_image) => {
+                let width = rgba_image.width();
+                let height = rgba_image.height();
+                let data = rgba_image.into_raw();
 
-            let event = ServoEvent {
-                event: Some(servo_event::Event::FrameReady(FrameReady {
-                    rgba_data: data,
-                    width,
-                    height,
-                })),
-            };
-            let _ = send_event(event);
+                log::trace!("Sending FrameReady event: {}x{}, {} bytes", width, height, data.len());
+                let event = ServoEvent {
+                    event: Some(servo_event::Event::FrameReady(FrameReady {
+                        rgba_data: data,
+                        width,
+                        height,
+                    })),
+                };
+                if let Err(e) = send_event(event) {
+                    log::error!("Failed to send FrameReady event: {:?}", e);
+                }
+            }
+            None => {
+                log::warn!("Failed to read frame image from rendering context");
+            }
         }
     }
 
@@ -145,12 +183,16 @@ impl WebViewDelegate for ServoWebViewDelegate {
             servo::Cursor::Progress => "progress",
             _ => "default",
         };
+        
+        log::trace!("Cursor changed to: {}", cursor_str);
         let event = ServoEvent {
             event: Some(servo_event::Event::CursorChanged(CursorChanged {
                 cursor: cursor_str.to_string(),
             })),
         };
-        let _ = send_event(event);
+        if let Err(e) = send_event(event) {
+            log::error!("Failed to send CursorChanged event: {:?}", e);
+        }
     }
 }
 
@@ -163,25 +205,55 @@ fn init_crypto() {
 fn spawn_stdin_channel() -> Receiver<ServoAction> {
     let (tx, rx) = mpsc::channel::<ServoAction>();
     thread::spawn(move || {
+        log::info!("Starting stdin reader thread");
         let mut stdin = io::stdin();
+        let mut message_count = 0u64;
+        
         loop {
             let mut len_buf = [0u8; 4];
-            if stdin.read_exact(&mut len_buf).is_err() {
-                break;
-            }
-            let len = u32::from_le_bytes(len_buf) as usize;
+            match stdin.read_exact(&mut len_buf) {
+                Ok(_) => {
+                    let len = u32::from_le_bytes(len_buf) as usize;
+                    log::trace!("Reading action message #{} of {} bytes", message_count + 1, len);
+                    
+                    if len > 10_000_000 { // 10MB sanity check
+                        log::error!("Action message length {} is suspiciously large, breaking", len);
+                        break;
+                    }
 
-            let mut msg_buf = vec![0u8; len];
-            if stdin.read_exact(&mut msg_buf).is_err() {
-                break;
-            }
-
-            if let Ok(action) = ServoAction::decode_from_slice(&msg_buf)
-                && tx.send(action).is_err()
-            {
-                break;
+                    let mut msg_buf = vec![0u8; len];
+                    match stdin.read_exact(&mut msg_buf) {
+                        Ok(_) => {
+                            match ServoAction::decode_from_slice(&msg_buf) {
+                                Ok(action) => {
+                                    message_count += 1;
+                                    let action_type = action.action.as_ref().map(|a| std::mem::discriminant(a));
+                                    log::trace!("Decoded action #{}: {:?}", message_count, action_type);
+                                    
+                                    if tx.send(action).is_err() {
+                                        log::warn!("Action receiver dropped, stopping stdin reader");
+                                        break;
+                                    }
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to decode action message: {:?}", e);
+                                    break;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to read action data: {:?}", e);
+                            break;
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::info!("Stdin reader ending: {:?}", e);
+                    break;
+                }
             }
         }
+        log::info!("Stdin reader thread ended after {} messages", message_count);
     });
     rx
 }
@@ -212,23 +284,52 @@ fn main() {
 
     let receiver = spawn_stdin_channel();
 
+    let mut loop_count = 0u64;
+    let mut last_log_count = 0u64;
+    let mut last_action_count = 0u64;
+    
+    log::info!("Starting main event loop");
     loop {
+        loop_count += 1;
+        
+        // Log periodic status every 10000 iterations
+        if loop_count % 10000 == 0 {
+            log::debug!("Main loop iteration {}, processed {} log messages, {} actions", 
+                       loop_count, last_log_count, last_action_count);
+        }
+
         // Process queued log messages
+        let mut log_messages_processed = 0;
         while let Ok(log_message) = log_receiver.try_recv() {
+            log_messages_processed += 1;
+            last_log_count += 1;
             let event = ServoEvent {
                 event: Some(servo_event::Event::LogMessage(log_message)),
             };
-            let _ = send_event(event);
+            if let Err(e) = send_event(event) {
+                log::error!("Failed to send log message event: {:?}", e);
+            }
+        }
+        
+        if log_messages_processed > 0 {
+            log::trace!("Processed {} log messages", log_messages_processed);
         }
 
-        if let Ok(action) = receiver.try_recv()
-            && let Some(action_type) = action.action
-        {
-            match action_type {
+        if let Ok(action) = receiver.try_recv() {
+            last_action_count += 1;
+            if let Some(action_type) = action.action {
+                log::debug!("Processing action #{}: {:?}", last_action_count, std::mem::discriminant(&action_type));
+                match action_type {
                 servo_action::Action::LoadUrl(load_url) => {
                     log::info!("Loading URL: {}", load_url.url);
-                    if let Ok(parsed_url) = Url::parse(&load_url.url) {
-                        webview.load(parsed_url);
+                    match Url::parse(&load_url.url) {
+                        Ok(parsed_url) => {
+                            webview.load(parsed_url);
+                            log::debug!("URL load request sent to webview");
+                        }
+                        Err(e) => {
+                            log::error!("Failed to parse URL '{}': {:?}", load_url.url, e);
+                        }
                     }
                 }
                 servo_action::Action::Reload(_) => {
@@ -353,19 +454,27 @@ fn main() {
                     );
                 }
                 servo_action::Action::Shutdown(_) => {
-                    log::info!("Shutting down servo");
+                    log::info!("Received shutdown command, shutting down servo");
                     servo.deinit();
+                    log::info!("Servo deinit complete, exiting main loop");
                     break;
                 }
+            }
+            } else {
+                log::warn!("Received action with no action type");
             }
         }
 
         // Spin servo event loop
         if !servo.spin_event_loop() {
+            log::warn!("Servo event loop returned false, exiting");
             break;
         }
 
         // FIXME: we need a better way to not have a busy loop
         std::thread::sleep(Duration::from_millis(5));
     }
+    
+    log::info!("Main event loop ended after {} iterations, {} log messages, {} actions", 
+               loop_count, last_log_count, last_action_count);
 }
