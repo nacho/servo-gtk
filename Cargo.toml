@@ -19,8 +19,8 @@ path = "examples/browser.rs"
 gio = "0.21.2"
 glib = { version = "0.21", features = ["v2_74", "log_macros"] }
 gtk = { package="gtk4", version="0.10.1" }
-libservo = { git = "https://github.com/servo/servo.git", rev = "1c0c1ecafa400b3aebd0b55d0440c931ab22d96b" }
-embedder_traits = { git = "https://github.com/servo/servo.git", rev = "1c0c1ecafa400b3aebd0b55d0440c931ab22d96b" }
+libservo = { git = "https://github.com/servo/servo.git", rev = "060d8dba669bbc98c33ea508f1fd055c33f9099b" }
+embedder_traits = { git = "https://github.com/servo/servo.git", rev = "060d8dba669bbc98c33ea508f1fd055c33f9099b" }
 js = { package = "mozjs", git = "https://github.com/servo/mozjs" }
 surfman = { version = "0.9", features = ["chains", "sm-angle", "sm-angle-default"] }
 gl = "0.14.0"
