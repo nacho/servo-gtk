@@ -49,12 +49,32 @@ message ButtonRelease {
   double y = 3;
 }
 
+enum Location {
+  STANDARD = 0;
+  LEFT = 1;
+  RIGHT = 2;
+  NUMPAD = 3;
+}
+
+enum KeyType {
+  CHARACTER = 0;
+  NAMED = 1;
+}
+
 message KeyPress {
   string key = 1;
+  KeyType key_type = 2;
+  Location location = 3;
+  uint32 key_code = 4;
+  uint32 modifiers = 5;
 }
 
 message KeyRelease {
   string key = 1;
+  KeyType key_type = 2;
+  Location location = 3;
+  uint32 key_code = 4;
+  uint32 modifiers = 5;
 }
 
 message Scroll {
