@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+use crate::key_tables::KeyLocation;
 use async_channel;
 use gio::prelude::*;
 use gio::{OutputStream, Subprocess, SubprocessFlags, SubprocessLauncher};
@@ -181,19 +182,60 @@ impl ServoRunner {
         });
     }
 
-    pub fn key_press(&self, key: char) {
+    fn convert_location(location: KeyLocation) -> crate::proto_ipc::Location {
+        match location {
+            KeyLocation::Standard => crate::proto_ipc::Location::Standard,
+            KeyLocation::Left => crate::proto_ipc::Location::Left,
+            KeyLocation::Right => crate::proto_ipc::Location::Right,
+            KeyLocation::Numpad => crate::proto_ipc::Location::Numpad,
+        }
+    }
+
+    pub fn key_press(
+        &self,
+        key: String,
+        is_character: bool,
+        location: KeyLocation,
+        key_code: u32,
+        modifiers: u32,
+    ) {
+        let key_type = if is_character {
+            crate::proto_ipc::KeyType::Character
+        } else {
+            crate::proto_ipc::KeyType::Named
+        };
         self.send_action(ServoAction {
             action: Some(servo_action::Action::KeyPress(crate::proto_ipc::KeyPress {
-                key: key.to_string(),
+                key,
+                key_type: key_type as i32,
+                location: Self::convert_location(location) as i32,
+                key_code,
+                modifiers,
             })),
         });
     }
 
-    pub fn key_release(&self, key: char) {
+    pub fn key_release(
+        &self,
+        key: String,
+        is_character: bool,
+        location: KeyLocation,
+        key_code: u32,
+        modifiers: u32,
+    ) {
+        let key_type = if is_character {
+            crate::proto_ipc::KeyType::Character
+        } else {
+            crate::proto_ipc::KeyType::Named
+        };
         self.send_action(ServoAction {
             action: Some(servo_action::Action::KeyRelease(
                 crate::proto_ipc::KeyRelease {
-                    key: key.to_string(),
+                    key,
+                    key_type: key_type as i32,
+                    location: Self::convert_location(location) as i32,
+                    key_code,
+                    modifiers,
                 },
             )),
         });

@@ -9,7 +9,7 @@ use core::time::Duration;
 use dpi::PhysicalSize;
 use embedder_traits::resources;
 use euclid::{Point2D, Size2D};
-use keyboard_types::{Key, KeyState};
+use keyboard_types::{Code, Key, KeyState, Location, Modifiers, NamedKey};
 use servo::webrender_api::ScrollLocation;
 use servo::webrender_api::units::{DeviceIntPoint, DeviceIntRect, DeviceRect, LayoutVector2D};
 use servo::{
@@ -17,6 +17,7 @@ use servo::{
     ServoBuilder,
 };
 use servo::{RenderingContext, SoftwareRenderingContext, WebView, WebViewBuilder, WebViewDelegate};
+use std::str::FromStr;
 use std::sync::mpsc;
 use std::sync::mpsc::Receiver;
 use std::thread;
@@ -186,6 +187,42 @@ fn spawn_stdin_channel() -> Receiver<ServoAction> {
     rx
 }
 
+fn convert_location(proto_location: servo_gtk::proto_ipc::Location) -> Location {
+    match proto_location {
+        servo_gtk::proto_ipc::Location::Standard => Location::Standard,
+        servo_gtk::proto_ipc::Location::Left => Location::Left,
+        servo_gtk::proto_ipc::Location::Right => Location::Right,
+        servo_gtk::proto_ipc::Location::Numpad => Location::Numpad,
+    }
+}
+
+fn convert_key_event(
+    key_str: String,
+    key_type: i32,
+    location: i32,
+    key_code: u32,
+    modifiers: u32,
+    state: KeyState,
+) -> KeyboardEvent {
+    let key = match servo_gtk::proto_ipc::KeyType::try_from(key_type)
+        .unwrap_or(servo_gtk::proto_ipc::KeyType::Character)
+    {
+        servo_gtk::proto_ipc::KeyType::Character => Key::Character(key_str),
+        servo_gtk::proto_ipc::KeyType::Named => {
+            Key::Named(NamedKey::from_str(&key_str).unwrap_or(NamedKey::Unidentified))
+        }
+    };
+    let location = convert_location(
+        servo_gtk::proto_ipc::Location::try_from(location)
+            .unwrap_or(servo_gtk::proto_ipc::Location::Standard),
+    );
+    let modifiers = Modifiers::from_bits_truncate(modifiers);
+    // TODO: Convert key_code to proper Code enum value
+    let _code = key_code; // Keep for future use
+    let code = Code::Unidentified;
+    KeyboardEvent::new_without_event(state, key, code, location, modifiers, false, false)
+}
+
 fn main() {
     let (event_logger, log_receiver) = EventLogger::new();
 
@@ -297,14 +334,26 @@ fn main() {
                 }
                 servo_action::Action::KeyPress(key_press) => {
                     log::debug!("Key press: {}", key_press.key);
-                    let key = Key::Character(key_press.key);
-                    let key_event = KeyboardEvent::from_state_and_key(KeyState::Down, key);
+                    let key_event = convert_key_event(
+                        key_press.key,
+                        key_press.key_type,
+                        key_press.location,
+                        key_press.key_code,
+                        key_press.modifiers,
+                        KeyState::Down,
+                    );
                     webview.notify_input_event(InputEvent::Keyboard(key_event));
                 }
                 servo_action::Action::KeyRelease(key_release) => {
                     log::debug!("Key release: {}", key_release.key);
-                    let key = Key::Character(key_release.key);
-                    let key_event = KeyboardEvent::from_state_and_key(KeyState::Up, key);
+                    let key_event = convert_key_event(
+                        key_release.key,
+                        key_release.key_type,
+                        key_release.location,
+                        key_release.key_code,
+                        key_release.modifiers,
+                        KeyState::Up,
+                    );
                     webview.notify_input_event(InputEvent::Keyboard(key_event));
                 }
                 servo_action::Action::TouchBegin(touch_begin) => {

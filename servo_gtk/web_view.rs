@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+use crate::key_tables::KeyTables;
 use crate::proto_ipc::{ServoEvent, servo_event};
 use crate::servo_runner::{LogLevel, ServoRunner};
 use glib::info;
@@ -21,6 +22,7 @@ mod imp {
     pub struct WebView {
         pub servo_runner: RefCell<Option<ServoRunner>>,
         pub memory_texture: RefCell<Option<gdk::MemoryTexture>>,
+        pub key_tables: KeyTables,
     }
 
     #[glib::object_subclass]
@@ -108,26 +110,28 @@ mod imp {
 
             let key_controller = gtk::EventControllerKey::new();
             let obj_weak = self.obj().downgrade();
-            key_controller.connect_key_pressed(move |_, keyval, _keycode, _state| {
+            key_controller.connect_key_pressed(move |_, keyval, keycode, state| {
                 if let Some(obj) = obj_weak.upgrade() {
                     let imp = obj.imp();
                     if let Some(servo) = imp.servo_runner.borrow().as_ref()
-                        && let Some(unicode) = keyval.to_unicode()
+                        && let Some((key, is_character, location)) =
+                            imp.key_tables.key_from_keyval(keyval.into_glib())
                     {
-                        info!("Pressed key {unicode}");
-                        servo.key_press(unicode);
+                        info!("Pressed key {:?} at location {:?}", key, location);
+                        servo.key_press(key, is_character, location, keycode, state.bits());
                     }
                 }
                 glib::Propagation::Proceed
             });
             let obj_weak = self.obj().downgrade();
-            key_controller.connect_key_released(move |_, keyval, _keycode, _state| {
+            key_controller.connect_key_released(move |_, keyval, keycode, state| {
                 if let Some(obj) = obj_weak.upgrade() {
                     let imp = obj.imp();
                     if let Some(servo) = imp.servo_runner.borrow().as_ref()
-                        && let Some(unicode) = keyval.to_unicode()
+                        && let Some((key, is_character, location)) =
+                            imp.key_tables.key_from_keyval(keyval.into_glib())
                     {
-                        servo.key_release(unicode);
+                        servo.key_release(key, is_character, location, keycode, state.bits());
                     }
                 }
             });
