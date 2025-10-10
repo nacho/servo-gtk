@@ -117,7 +117,7 @@ mod imp {
                         && let Some((key, is_character, location)) =
                             imp.key_tables.key_from_keyval(keyval.into_glib())
                     {
-                        info!("Pressed key {:?} at location {:?}", key, location);
+                        info!("Pressed key {key:?} at location {location:?}");
                         servo.key_press(key, is_character, location, keycode, state.bits());
                     }
                 }
