@@ -71,8 +71,7 @@ fn send_event(event: ServoEvent) -> std::io::Result<()> {
     let encoded = event.encode_to_vec();
     let len = (encoded.len() as u32).to_le_bytes();
     io::stdout().write_all(&len)?;
-    io::stdout().write_all(&encoded)?;
-    io::stdout().flush()
+    io::stdout().write_all(&encoded)
 }
 
 struct ServoWebViewDelegate {
