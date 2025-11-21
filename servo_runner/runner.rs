@@ -7,14 +7,14 @@ use std::rc::Rc;
 
 use core::time::Duration;
 use dpi::PhysicalSize;
-use embedder_traits::resources;
+use embedder_traits::{WebViewPoint, WebViewVector, resources};
 use euclid::{Point2D, Size2D};
 use keyboard_types::{Code, Key, KeyState, Location, Modifiers, NamedKey};
-use servo::webrender_api::ScrollLocation;
-use servo::webrender_api::units::{DeviceIntPoint, DeviceIntRect, DeviceRect, LayoutVector2D};
+
+use servo::webrender_api::units::{DeviceIntRect, DeviceRect, DeviceVector2D};
 use servo::{
     InputEvent, KeyboardEvent, MouseButton, MouseButtonAction, MouseButtonEvent, MouseMoveEvent,
-    ServoBuilder,
+    Scroll, ServoBuilder,
 };
 use servo::{RenderingContext, SoftwareRenderingContext, WebView, WebViewBuilder, WebViewDelegate};
 use std::str::FromStr;
@@ -290,7 +290,7 @@ fn main() {
                 servo_action::Action::Motion(motion) => {
                     log::debug!("Mouse motion: ({}, {})", motion.x, motion.y);
                     webview.notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(
-                        Point2D::new(motion.x as f32, motion.y as f32),
+                        WebViewPoint::Device(Point2D::new(motion.x as f32, motion.y as f32)),
                     )));
                 }
                 servo_action::Action::ButtonPress(button_press) => {
@@ -309,7 +309,10 @@ fn main() {
                     webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
                         MouseButtonAction::Down,
                         mouse_button,
-                        Point2D::new(button_press.x as f32, button_press.y as f32),
+                        WebViewPoint::Device(Point2D::new(
+                            button_press.x as f32,
+                            button_press.y as f32,
+                        )),
                     )));
                 }
                 servo_action::Action::ButtonRelease(button_release) => {
@@ -328,7 +331,10 @@ fn main() {
                     webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
                         MouseButtonAction::Up,
                         mouse_button,
-                        Point2D::new(button_release.x as f32, button_release.y as f32),
+                        WebViewPoint::Device(Point2D::new(
+                            button_release.x as f32,
+                            button_release.y as f32,
+                        )),
                     )));
                 }
                 servo_action::Action::KeyPress(key_press) => {
@@ -360,7 +366,10 @@ fn main() {
                     webview.notify_input_event(InputEvent::Touch(servo::TouchEvent::new(
                         servo::TouchEventType::Down,
                         servo::TouchId(0),
-                        Point2D::new(touch_begin.x as f32, touch_begin.y as f32),
+                        WebViewPoint::Device(Point2D::new(
+                            touch_begin.x as f32,
+                            touch_begin.y as f32,
+                        )),
                     )));
                 }
                 servo_action::Action::TouchUpdate(touch_update) => {
@@ -368,7 +377,10 @@ fn main() {
                     webview.notify_input_event(InputEvent::Touch(servo::TouchEvent::new(
                         servo::TouchEventType::Move,
                         servo::TouchId(0),
-                        Point2D::new(touch_update.x as f32, touch_update.y as f32),
+                        WebViewPoint::Device(Point2D::new(
+                            touch_update.x as f32,
+                            touch_update.y as f32,
+                        )),
                     )));
                 }
                 servo_action::Action::TouchEnd(touch_end) => {
@@ -376,7 +388,7 @@ fn main() {
                     webview.notify_input_event(InputEvent::Touch(servo::TouchEvent::new(
                         servo::TouchEventType::Up,
                         servo::TouchId(0),
-                        Point2D::new(touch_end.x as f32, touch_end.y as f32),
+                        WebViewPoint::Device(Point2D::new(touch_end.x as f32, touch_end.y as f32)),
                     )));
                 }
                 servo_action::Action::TouchCancel(touch_cancel) => {
@@ -384,7 +396,10 @@ fn main() {
                     webview.notify_input_event(InputEvent::Touch(servo::TouchEvent::new(
                         servo::TouchEventType::Cancel,
                         servo::TouchId(0),
-                        Point2D::new(touch_cancel.x as f32, touch_cancel.y as f32),
+                        WebViewPoint::Device(Point2D::new(
+                            touch_cancel.x as f32,
+                            touch_cancel.y as f32,
+                        )),
                     )));
                 }
                 servo_action::Action::Scroll(scroll) => {
@@ -393,11 +408,11 @@ fn main() {
                     // winit_minimal. We should properly understand it and
                     // maybe add some constants
                     webview.notify_scroll_event(
-                        ScrollLocation::Delta(LayoutVector2D::new(
+                        Scroll::Delta(WebViewVector::Device(DeviceVector2D::new(
                             20.0 * scroll.dx as f32,
                             20.0 * scroll.dy as f32,
-                        )),
-                        DeviceIntPoint::new(10, 10),
+                        ))),
+                        WebViewPoint::Device(Point2D::new(10.0, 10.0)),
                     );
                 }
                 servo_action::Action::Shutdown(_) => {
