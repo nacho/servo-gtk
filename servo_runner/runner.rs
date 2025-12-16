@@ -8,13 +8,12 @@ use std::rc::Rc;
 use core::time::Duration;
 use dpi::PhysicalSize;
 use embedder_traits::{WebViewPoint, WebViewVector, resources};
-use euclid::{Point2D, Size2D};
+use euclid::Point2D;
 use keyboard_types::{Code, Key, KeyState, Location, Modifiers, NamedKey};
 
-use servo::webrender_api::units::{DeviceIntRect, DeviceRect, DeviceVector2D};
 use servo::{
-    InputEvent, KeyboardEvent, MouseButton, MouseButtonAction, MouseButtonEvent, MouseMoveEvent,
-    Scroll, ServoBuilder,
+    DeviceIntRect, DeviceVector2D, InputEvent, KeyboardEvent, MouseButton, MouseButtonAction,
+    MouseButtonEvent, MouseMoveEvent, Scroll, ServoBuilder,
 };
 use servo::{RenderingContext, SoftwareRenderingContext, WebView, WebViewBuilder, WebViewDelegate};
 use std::str::FromStr;
@@ -238,13 +237,13 @@ fn main() {
         SoftwareRenderingContext::new(size).expect("Failed to create Software rendering context"),
     );
 
-    let servo_builder = ServoBuilder::new(rendering_context.clone());
+    let servo_builder = ServoBuilder::default();
     let servo = servo_builder.build();
 
-    let delegate = Rc::new(ServoWebViewDelegate::new(rendering_context));
-    let webview = WebViewBuilder::new(&servo).delegate(delegate).build();
-
-    webview.focus_and_raise_to_top(true);
+    let delegate = Rc::new(ServoWebViewDelegate::new(rendering_context.clone()));
+    let webview = WebViewBuilder::new(&servo, rendering_context)
+        .delegate(delegate)
+        .build();
 
     let receiver = spawn_stdin_channel();
 
@@ -281,10 +280,6 @@ fn main() {
                 }
                 servo_action::Action::Resize(resize) => {
                     log::debug!("Resizing to {}x{}", resize.width, resize.height);
-                    webview.move_resize(DeviceRect::from_origin_and_size(
-                        Point2D::origin(),
-                        Size2D::new(resize.width as f32, resize.height as f32),
-                    ));
                     webview.resize(PhysicalSize::new(resize.width, resize.height));
                 }
                 servo_action::Action::Motion(motion) => {
@@ -417,16 +412,13 @@ fn main() {
                 }
                 servo_action::Action::Shutdown(_) => {
                     log::info!("Shutting down servo");
-                    servo.deinit();
                     break;
                 }
             }
         }
 
         // Spin servo event loop
-        if !servo.spin_event_loop() {
-            break;
-        }
+        servo.spin_event_loop();
 
         // FIXME: we need a better way to not have a busy loop
         std::thread::sleep(Duration::from_millis(5));
