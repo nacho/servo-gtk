@@ -6,24 +6,25 @@ use gio::Resource;
 use glib::Bytes;
 use servo::resources::{Resource as ServoResource, ResourceReaderMethods};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
-pub(crate) struct ResourceReaderInstance;
-
-impl Default for ResourceReaderInstance {
-    fn default() -> Self {
-        Self::new()
-    }
+pub(crate) struct ResourceReaderInstance {
+    resource: OnceLock<()>,
 }
 
-impl ResourceReaderInstance {
-    pub(crate) fn new() -> Self {
+static RESOURCE_READER: ResourceReaderInstance = ResourceReaderInstance {
+    resource: OnceLock::new(),
+};
+
+servo::submit_resource_reader!(&RESOURCE_READER);
+
+pub(crate) fn init_resources() {
+    RESOURCE_READER.resource.get_or_init(|| {
         let resource_data = include_bytes!(concat!(env!("OUT_DIR"), "/resources.gresource"));
         let bytes = Bytes::from_static(resource_data);
         let resource = Resource::from_data(&bytes).expect("Failed to load gresource");
         gio::resources_register(&resource);
-
-        Self
-    }
+    });
 }
 
 unsafe impl Send for ResourceReaderInstance {}

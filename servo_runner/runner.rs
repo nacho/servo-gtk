@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use core::time::Duration;
 use dpi::PhysicalSize;
-use embedder_traits::{WebViewPoint, WebViewVector, resources};
+use embedder_traits::{WebViewPoint, WebViewVector};
 use euclid::Point2D;
 use keyboard_types::{Code, Key, KeyState, Location, Modifiers, NamedKey};
 
@@ -28,7 +28,7 @@ use servo_gtk::proto_ipc::{
 };
 
 mod resource_reader;
-use resource_reader::ResourceReaderInstance;
+use resource_reader::init_resources;
 
 struct EventLogger {
     sender: std::sync::mpsc::Sender<LogMessage>,
@@ -228,7 +228,7 @@ fn main() {
     log::set_max_level(log::LevelFilter::Debug);
 
     init_crypto();
-    resources::set(Box::new(ResourceReaderInstance::new()));
+    init_resources();
 
     log::info!("Starting servo runner");
 
@@ -365,6 +365,7 @@ fn main() {
                             touch_begin.x as f32,
                             touch_begin.y as f32,
                         )),
+                        servo::TouchPointerType::Touch,
                     )));
                 }
                 servo_action::Action::TouchUpdate(touch_update) => {
@@ -376,6 +377,7 @@ fn main() {
                             touch_update.x as f32,
                             touch_update.y as f32,
                         )),
+                        servo::TouchPointerType::Touch,
                     )));
                 }
                 servo_action::Action::TouchEnd(touch_end) => {
@@ -384,6 +386,7 @@ fn main() {
                         servo::TouchEventType::Up,
                         servo::TouchId(0),
                         WebViewPoint::Device(Point2D::new(touch_end.x as f32, touch_end.y as f32)),
+                        servo::TouchPointerType::Touch,
                     )));
                 }
                 servo_action::Action::TouchCancel(touch_cancel) => {
@@ -395,6 +398,7 @@ fn main() {
                             touch_cancel.x as f32,
                             touch_cancel.y as f32,
                         )),
+                        servo::TouchPointerType::Touch,
                     )));
                 }
                 servo_action::Action::Scroll(scroll) => {
