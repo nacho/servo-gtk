@@ -27,8 +27,6 @@ use servo_gtk::proto_ipc::{
     servo_event,
 };
 
-
-
 struct EventLogger {
     sender: std::sync::mpsc::Sender<LogMessage>,
 }
