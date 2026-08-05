@@ -168,8 +168,8 @@ mod imp {
                 let bounds = gtk::graphene::Rect::new(
                     0.0,
                     0.0,
-                    self.obj().width() as f32,
-                    self.obj().height() as f32,
+                    gtk::prelude::WidgetExt::width(self.obj().as_ref()) as f32,
+                    gtk::prelude::WidgetExt::height(self.obj().as_ref()) as f32,
                 );
                 snapshot.append_texture(texture, &bounds);
             }
@@ -224,7 +224,7 @@ impl WebView {
     }
 
     fn translate_event_coordinates(&self, event: &gdk::Event) -> Option<(f64, f64)> {
-        let root = self.root()?;
+        let root = gtk::prelude::WidgetExt::root(self)?;
         let native = root.native()?;
         let (nx, ny) = native.surface_transform();
 
@@ -269,7 +269,7 @@ impl WebView {
             servo_event::Event::CursorChanged(cursor_changed) => {
                 let gdk_cursor = gdk::Cursor::from_name(&cursor_changed.cursor, None);
                 if let Some(cursor) = gdk_cursor {
-                    self.set_cursor(Some(&cursor));
+                    gtk::prelude::WidgetExt::set_cursor(self, Some(&cursor));
                 }
             }
             servo_event::Event::LogMessage(log_msg) => {
