@@ -27,8 +27,7 @@ use servo_gtk::proto_ipc::{
     servo_event,
 };
 
-mod resource_reader;
-use resource_reader::init_resources;
+
 
 struct EventLogger {
     sender: std::sync::mpsc::Sender<LogMessage>,
@@ -228,7 +227,6 @@ fn main() {
     log::set_max_level(log::LevelFilter::Debug);
 
     init_crypto();
-    init_resources();
 
     log::info!("Starting servo runner");
 

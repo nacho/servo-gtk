@@ -37,5 +37,4 @@ prost = "0.13"
 bytes = "1.0"
 
 [build-dependencies]
-glib-build-tools = "0.22"
 prost-build = "0.13"
