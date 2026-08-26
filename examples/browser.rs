@@ -16,6 +16,10 @@ const LOGGER: glib::GlibLogger = glib::GlibLogger::new(
 );
 
 fn main() -> glib::ExitCode {
+    // If this process was spawned as the Servo runner subprocess, hand off to
+    // it immediately. This never returns when running as the runner.
+    servo_gtk::run_as_runner_if_requested();
+
     log::set_logger(&LOGGER).expect("logger already set");
     log::set_max_level(log::LevelFilter::Debug);
 

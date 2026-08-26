@@ -44,14 +44,19 @@ impl ServoRunner {
     pub fn new() -> Self {
         let launcher =
             SubprocessLauncher::new(SubprocessFlags::STDIN_PIPE | SubprocessFlags::STDOUT_PIPE);
+
+        // Re-execute this same executable with a marker argument so it starts
+        // as the Servo runner subprocess. The consuming application is
+        // responsible for calling `servo_gtk::run_as_runner_if_requested()` at
+        // the start of `main()` to dispatch to the runner. This removes any
+        // need to install a separate binary or invoke `cargo`.
+        let current_exe = std::env::current_exe().expect("Failed to get current executable path");
         let subprocess = launcher
             .spawn(&[
-                OsStr::new("cargo"),
-                OsStr::new("run"),
-                OsStr::new("--bin"),
-                OsStr::new("servo-runner"),
+                current_exe.as_os_str(),
+                OsStr::new(crate::runner::RUNNER_ARG),
             ])
-            .expect("Failed to spawn servo-runner process");
+            .expect("Failed to spawn servo runner process");
 
         let stdin = subprocess.stdin_pipe().expect("Failed to get stdin");
         let stdout = subprocess.stdout_pipe().expect("Failed to get stdout");
