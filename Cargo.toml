@@ -7,10 +7,6 @@ edition = "2024"
 name = "servo_gtk"
 path = "servo_gtk/lib.rs"
 
-[[bin]]
-name = "servo-runner"
-path = "servo_runner/runner.rs"
-
 [[example]]
 name = "browser"
 path = "examples/browser.rs"
