@@ -34,3 +34,7 @@ bytes = "1.0"
 
 [build-dependencies]
 prost-build = "0.13"
+
+# Use a fork of epoxy that fixes the build; the upstream 0.1.0 crate blocks `cargo update`.
+[patch.crates-io]
+epoxy = { git = "https://github.com/theCapypara/epoxy-rs", rev = "7d9d88a8dfec2ddedc647b7a8f6c1e5b3e6c6ec0" }
