@@ -20,6 +20,7 @@ use embedder_traits::{WebViewPoint, WebViewVector};
 use euclid::Point2D;
 use keyboard_types::{Code, Key, KeyState, Location, Modifiers, NamedKey};
 
+use servo::LoadStatus;
 use servo::{
     DeviceIntRect, DeviceVector2D, InputEvent, KeyboardEvent, MouseButton, MouseButtonAction,
     MouseButtonEvent, MouseMoveEvent, Scroll, ServoBuilder,
@@ -32,8 +33,8 @@ use std::thread;
 use url::Url;
 
 use crate::proto_ipc::{
-    CursorChanged, FrameReady, LogLevel, LogMessage, ServoAction, ServoEvent, servo_action,
-    servo_event,
+    CursorChanged, FrameReady, LoadEnd, LoadStart, LogLevel, LogMessage, ServoAction, ServoEvent,
+    TitleChanged, UrlChanged, servo_action, servo_event,
 };
 
 /// Marker argument used to signal that the process should run as a Servo
@@ -188,6 +189,51 @@ impl WebViewDelegate for ServoWebViewDelegate {
             })),
         };
         let _ = send_event(event);
+    }
+
+    fn notify_url_changed(&self, _webview: WebView, url: Url) {
+        let event = ServoEvent {
+            event: Some(servo_event::Event::UrlChanged(UrlChanged {
+                url: url.to_string(),
+            })),
+        };
+        let _ = send_event(event);
+    }
+
+    fn notify_page_title_changed(&self, _webview: WebView, title: Option<String>) {
+        let event = ServoEvent {
+            event: Some(servo_event::Event::TitleChanged(TitleChanged {
+                title: title.unwrap_or_default(),
+            })),
+        };
+        let _ = send_event(event);
+    }
+
+    fn notify_load_status_changed(&self, webview: WebView, status: LoadStatus) {
+        // Use the current URL of the webview as the payload; it may be `None`
+        // very early in a load, in which case we send an empty string.
+        let url = webview.url().map(|u| u.to_string()).unwrap_or_default();
+        if let Some(event) = load_status_to_event(status, url) {
+            let _ = send_event(event);
+        }
+    }
+}
+
+/// Map a Servo [`LoadStatus`] to the corresponding [`ServoEvent`], if any.
+///
+/// Per the servo-gtk IPC contract we only surface the start and completion of
+/// a load: `Started` becomes a [`LoadStart`] and `Complete` becomes a
+/// [`LoadEnd`]. The intermediate `HeadParsed` state has no dedicated event and
+/// maps to `None`.
+fn load_status_to_event(status: LoadStatus, url: String) -> Option<ServoEvent> {
+    match status {
+        LoadStatus::Started => Some(ServoEvent {
+            event: Some(servo_event::Event::LoadStart(LoadStart { url })),
+        }),
+        LoadStatus::Complete => Some(ServoEvent {
+            event: Some(servo_event::Event::LoadEnd(LoadEnd { url })),
+        }),
+        LoadStatus::HeadParsed => None,
     }
 }
 
@@ -465,5 +511,39 @@ pub fn run() {
 
         // FIXME: we need a better way to not have a busy loop
         std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_status_started_maps_to_load_start() {
+        let event = load_status_to_event(LoadStatus::Started, "https://example.com/".to_string());
+        match event.and_then(|e| e.event) {
+            Some(servo_event::Event::LoadStart(load_start)) => {
+                assert_eq!(load_start.url, "https://example.com/");
+            }
+            other => panic!("expected LoadStart, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn load_status_complete_maps_to_load_end() {
+        let event = load_status_to_event(LoadStatus::Complete, "https://example.com/".to_string());
+        match event.and_then(|e| e.event) {
+            Some(servo_event::Event::LoadEnd(load_end)) => {
+                assert_eq!(load_end.url, "https://example.com/");
+            }
+            other => panic!("expected LoadEnd, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn load_status_head_parsed_maps_to_none() {
+        let event =
+            load_status_to_event(LoadStatus::HeadParsed, "https://example.com/".to_string());
+        assert!(event.is_none());
     }
 }
