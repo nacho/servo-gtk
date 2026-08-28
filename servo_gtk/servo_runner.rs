@@ -7,6 +7,7 @@ use async_channel;
 use gio::prelude::*;
 use gio::{OutputStream, Subprocess, SubprocessFlags, SubprocessLauncher};
 use glib::{debug, error, info, warn};
+use prost::Message;
 use std::ffi::OsStr;
 
 use crate::proto_ipc::{ServoAction, ServoEvent, servo_action};
