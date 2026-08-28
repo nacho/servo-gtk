@@ -6,23 +6,55 @@ use crate::key_tables::KeyTables;
 use crate::proto_ipc::{ServoEvent, servo_event};
 use crate::servo_runner::{LogLevel, ServoRunner};
 use glib::info;
+use glib::subclass::Signal;
 use glib::translate::*;
 use gtk::gdk;
 use gtk::prelude::*;
 use gtk::{glib, subclass::prelude::*};
 use image::RgbaImage;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::sync::OnceLock;
 
 const G_LOG_DOMAIN: &str = "ServoGtk";
+
+/// The state of a page load, delivered by the [`WebView::connect_load_changed`]
+/// signal.
+///
+/// Servo only surfaces load start and load completion, so only the
+/// corresponding two states are represented here. Observe [`WebView::uri`]
+/// changes via `notify::uri` for finer-grained navigation events such as
+/// redirects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, glib::Enum)]
+#[enum_type(name = "ServoGtkLoadEvent")]
+pub enum LoadEvent {
+    /// A new load request has started.
+    #[default]
+    Started,
+    /// Loading has finished (all resources loaded, `document.readyState` ==
+    /// `complete`).
+    Finished,
+}
 
 mod imp {
     use super::*;
 
-    #[derive(Default)]
+    #[derive(glib::Properties, Default)]
+    #[properties(wrapper_type = super::WebView)]
     pub struct WebView {
         pub servo_runner: RefCell<Option<ServoRunner>>,
         pub memory_texture: RefCell<Option<gdk::MemoryTexture>>,
         pub key_tables: KeyTables,
+
+        /// The URI of the currently loaded page, or `None` if nothing has been
+        /// loaded yet.
+        #[property(get, name = "uri", nullable)]
+        pub uri: RefCell<Option<String>>,
+        /// The title of the currently loaded page.
+        #[property(get, name = "title", nullable)]
+        pub title: RefCell<Option<String>>,
+        /// Whether the view is currently loading a page.
+        #[property(get, name = "is-loading")]
+        pub is_loading: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -32,7 +64,20 @@ mod imp {
         type ParentType = gtk::Widget;
     }
 
+    #[glib::derived_properties]
     impl ObjectImpl for WebView {
+        fn signals() -> &'static [Signal] {
+            static SIGNALS: OnceLock<Vec<Signal>> = OnceLock::new();
+            SIGNALS.get_or_init(|| {
+                vec![
+                    // Emitted when the load state of the page changes.
+                    Signal::builder("load-changed")
+                        .param_types([LoadEvent::static_type()])
+                        .build(),
+                ]
+            })
+        }
+
         fn constructed(&self) {
             self.parent_constructed();
 
@@ -223,6 +268,26 @@ impl WebView {
         }
     }
 
+    /// Connect to the `load-changed` signal, emitted when the load state of the
+    /// page changes.
+    ///
+    /// Note: the read-only `uri`, `title`, and `is-loading` properties each
+    /// have a generated getter (`uri()`, `title()`, `is_loading()`) and a
+    /// `notify::` signal (`connect_uri_notify`, `connect_title_notify`,
+    /// `connect_is_loading_notify`).
+    pub fn connect_load_changed<F: Fn(&Self, LoadEvent) + 'static>(
+        &self,
+        f: F,
+    ) -> glib::SignalHandlerId {
+        self.connect_closure(
+            "load-changed",
+            false,
+            glib::closure_local!(move |obj: &Self, event: LoadEvent| {
+                f(obj, event);
+            }),
+        )
+    }
+
     fn translate_event_coordinates(&self, event: &gdk::Event) -> Option<(f64, f64)> {
         let root = gtk::prelude::WidgetExt::root(self)?;
         let native = root.native()?;
@@ -272,15 +337,86 @@ impl WebView {
                     gtk::prelude::WidgetExt::set_cursor(self, Some(&cursor));
                 }
             }
+            servo_event::Event::UrlChanged(url_changed) => {
+                self.set_uri(Some(url_changed.url));
+            }
+            servo_event::Event::TitleChanged(title_changed) => {
+                self.set_title(Some(title_changed.title));
+            }
+            servo_event::Event::LoadStart(load_start) => {
+                if !load_start.url.is_empty() {
+                    self.set_uri(Some(load_start.url));
+                }
+                self.set_is_loading(true);
+                self.emit_load_changed(LoadEvent::Started);
+            }
+            servo_event::Event::LoadEnd(load_end) => {
+                if !load_end.url.is_empty() {
+                    self.set_uri(Some(load_end.url));
+                }
+                self.set_is_loading(false);
+                self.emit_load_changed(LoadEvent::Finished);
+            }
             servo_event::Event::LogMessage(log_msg) => {
                 if let Some(servo_runner) = self.imp().servo_runner.borrow().as_ref() {
                     servo_runner
                         .handle_log_message(LogLevel::from(log_msg.level), &log_msg.message);
                 }
             }
-            _ => {
-                info!("Unhandled event type: {:?}", event_type);
-            }
+        }
+    }
+
+    /// Update the cached `uri` and fire `notify::uri` if it changed.
+    fn set_uri(&self, uri: Option<String>) {
+        let imp = self.imp();
+        if *imp.uri.borrow() != uri {
+            imp.uri.replace(uri);
+            self.notify("uri");
+        }
+    }
+
+    /// Update the cached `title` and fire `notify::title` if it changed.
+    fn set_title(&self, title: Option<String>) {
+        let imp = self.imp();
+        if *imp.title.borrow() != title {
+            imp.title.replace(title);
+            self.notify("title");
+        }
+    }
+
+    /// Update the cached `is-loading` and fire `notify::is-loading` if it
+    /// changed.
+    fn set_is_loading(&self, is_loading: bool) {
+        let imp = self.imp();
+        if imp.is_loading.get() != is_loading {
+            imp.is_loading.set(is_loading);
+            self.notify("is-loading");
+        }
+    }
+
+    fn emit_load_changed(&self, event: LoadEvent) {
+        self.emit_by_name::<()>("load-changed", &[&event]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_event_registers_glib_enum_type() {
+        // Registering the enum type must succeed and be stable across calls.
+        let ty = LoadEvent::static_type();
+        assert_eq!(ty, LoadEvent::static_type());
+        assert_eq!(ty.name(), "ServoGtkLoadEvent");
+    }
+
+    #[test]
+    fn load_event_roundtrips_through_value() {
+        for event in [LoadEvent::Started, LoadEvent::Finished] {
+            let value = event.to_value();
+            let recovered = value.get::<LoadEvent>().expect("value holds a LoadEvent");
+            assert_eq!(event, recovered);
         }
     }
 }
