@@ -5,6 +5,7 @@
 use crate::key_tables::KeyTables;
 use crate::proto_ipc::{ServoEvent, servo_event};
 use crate::servo_runner::{LogLevel, ServoRunner};
+use crate::user_content::UserContentManager;
 use glib::info;
 use glib::subclass::Signal;
 use glib::translate::*;
@@ -13,6 +14,7 @@ use gtk::prelude::*;
 use gtk::{glib, subclass::prelude::*};
 use image::RgbaImage;
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::sync::OnceLock;
 
 const G_LOG_DOMAIN: &str = "ServoGtk";
@@ -41,9 +43,11 @@ mod imp {
     #[derive(glib::Properties, Default)]
     #[properties(wrapper_type = super::WebView)]
     pub struct WebView {
-        pub servo_runner: RefCell<Option<ServoRunner>>,
+        pub servo_runner: RefCell<Option<Rc<ServoRunner>>>,
         pub memory_texture: RefCell<Option<gdk::MemoryTexture>>,
         pub key_tables: KeyTables,
+        /// The user content manager attached to this WebView, if any.
+        pub user_content_manager: RefCell<Option<UserContentManager>>,
 
         /// The URI of the currently loaded page, or `None` if nothing has been
         /// loaded yet.
@@ -84,7 +88,7 @@ mod imp {
             let servo_runner = ServoRunner::new();
             let event_receiver = servo_runner.event_receiver();
 
-            self.servo_runner.replace(Some(servo_runner));
+            self.servo_runner.replace(Some(Rc::new(servo_runner)));
 
             let obj_weak = self.obj().downgrade();
             glib::spawn_future_local(async move {
@@ -240,6 +244,44 @@ impl WebView {
         glib::Object::builder().build()
     }
 
+    /// Create a `WebView` with an attached [`UserContentManager`], enabling
+    /// user-script/style injection and the page-to-native message channel.
+    ///
+    /// Analogous to constructing a `WebKitWebView` with a
+    /// `WebKitUserContentManager`. Any scripts, style sheets, or message
+    /// handlers added to the manager before or after this call take effect on
+    /// the next page load.
+    pub fn with_user_content_manager(user_content_manager: &UserContentManager) -> Self {
+        let web_view: Self = glib::Object::builder().build();
+        // Hand the manager a handle to this WebView's runner so it can forward
+        // user-content actions directly, then flush anything buffered before
+        // attach. The manager depends only on the runner, not on the WebView.
+        if let Some(runner) = web_view.imp().servo_runner.borrow().as_ref() {
+            user_content_manager.attach(runner.clone());
+        }
+        web_view
+            .imp()
+            .user_content_manager
+            .replace(Some(user_content_manager.clone()));
+        web_view
+    }
+
+    /// The [`UserContentManager`] attached to this `WebView`, if any.
+    pub fn user_content_manager(&self) -> Option<UserContentManager> {
+        self.imp().user_content_manager.borrow().clone()
+    }
+
+    /// Evaluate a snippet of JavaScript in the currently loaded page.
+    ///
+    /// Fire-and-forget: the result of the evaluation is not currently returned
+    /// to the caller. Analogous to `webkit_web_view_evaluate_javascript()`.
+    pub fn evaluate_javascript(&self, script: &str) {
+        let imp = self.imp();
+        if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+            servo.evaluate_javascript(script);
+        }
+    }
+
     pub fn load_url(&self, url: &str) {
         let imp = self.imp();
         if let Some(servo) = imp.servo_runner.borrow().as_ref() {
@@ -361,6 +403,11 @@ impl WebView {
                 if let Some(servo_runner) = self.imp().servo_runner.borrow().as_ref() {
                     servo_runner
                         .handle_log_message(LogLevel::from(log_msg.level), &log_msg.message);
+                }
+            }
+            servo_event::Event::ScriptMessage(script_message) => {
+                if let Some(ucm) = self.imp().user_content_manager.borrow().as_ref() {
+                    ucm.emit_script_message(&script_message.name, &script_message.body);
                 }
             }
         }

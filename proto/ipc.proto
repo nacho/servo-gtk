@@ -20,6 +20,13 @@ message ServoAction {
     TouchEnd touch_end = 14;
     TouchCancel touch_cancel = 15;
     bool shutdown = 16;
+    AddUserScript add_user_script = 17;
+    AddUserStyleSheet add_user_style_sheet = 18;
+    bool remove_all_user_scripts = 19;
+    bool remove_all_user_style_sheets = 20;
+    RegisterScriptMessageHandler register_script_message_handler = 21;
+    UnregisterScriptMessageHandler unregister_script_message_handler = 22;
+    EvaluateJavascript evaluate_javascript = 23;
   }
 }
 
@@ -111,6 +118,7 @@ message ServoEvent {
     LoadStart load_start = 5;
     LoadEnd load_end = 6;
     LogMessage log_message = 7;
+    ScriptMessage script_message = 8;
   }
 }
 
@@ -150,4 +158,41 @@ enum LogLevel {
 message LogMessage {
   LogLevel level = 1;
   string message = 2;
+}
+
+// A user script to inject into every page loaded in the WebView. Mirrors the
+// role of WebKitUserScript. Servo does not support injection-time or
+// injected-frames options at this revision, so only the source is carried.
+message AddUserScript {
+  string source = 1;
+}
+
+// A user CSS style sheet to inject into every page loaded in the WebView.
+message AddUserStyleSheet {
+  string source = 1;
+}
+
+// Register a named script message handler. Injected page JavaScript can then
+// call `window.servoGtk.messageHandlers.<name>.postMessage(value)` to send a
+// message to the native side, delivered back as a ScriptMessage event.
+message RegisterScriptMessageHandler {
+  string name = 1;
+}
+
+// Unregister a previously registered named script message handler.
+message UnregisterScriptMessageHandler {
+  string name = 1;
+}
+
+// Evaluate a snippet of JavaScript in the page. Fire-and-forget: the result is
+// not currently returned to the native side.
+message EvaluateJavascript {
+  string source = 1;
+}
+
+// A message sent from page JavaScript to the native side via a registered
+// script message handler. `body` is the JSON-serialized message value.
+message ScriptMessage {
+  string name = 1;
+  string body = 2;
 }
