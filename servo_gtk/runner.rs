@@ -19,6 +19,7 @@ use dpi::PhysicalSize;
 use embedder_traits::{WebViewPoint, WebViewVector};
 use euclid::Point2D;
 use keyboard_types::{Code, Key, KeyState, Location, Modifiers, NamedKey};
+use prost::Message;
 
 use servo::{
     DeviceIntRect, DeviceVector2D, InputEvent, KeyboardEvent, MouseButton, MouseButtonAction,
