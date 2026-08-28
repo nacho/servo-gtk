@@ -6321,6 +6321,7 @@ dependencies = [
  "prost",
  "prost-build",
  "rustls",
+ "serde_json",
  "servo",
  "servo-embedder-traits",
  "surfman 0.9.8",

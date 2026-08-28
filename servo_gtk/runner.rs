@@ -21,6 +21,8 @@ use euclid::Point2D;
 use keyboard_types::{Code, Key, KeyState, Location, Modifiers, NamedKey};
 
 use servo::LoadStatus;
+use servo::user_contents::UserStyleSheet;
+use servo::{ConsoleLogLevel, UserContentManager, UserScript};
 use servo::{
     DeviceIntRect, DeviceVector2D, InputEvent, KeyboardEvent, MouseButton, MouseButtonAction,
     MouseButtonEvent, MouseMoveEvent, Scroll, ServoBuilder,
@@ -33,9 +35,17 @@ use std::thread;
 use url::Url;
 
 use crate::proto_ipc::{
-    CursorChanged, FrameReady, LoadEnd, LoadStart, LogLevel, LogMessage, ServoAction, ServoEvent,
-    TitleChanged, UrlChanged, servo_action, servo_event,
+    CursorChanged, FrameReady, LoadEnd, LoadStart, LogLevel, LogMessage, ScriptMessage,
+    ServoAction, ServoEvent, TitleChanged, UrlChanged, servo_action, servo_event,
 };
+
+/// Prefix used by the injected script-message shim when forwarding a page
+/// message to the native side over the console-message bridge. Page messages
+/// are emitted as `console.log("<PREFIX>" + json)` where `json` is
+/// `{"name":<handler>,"body":<value>}`, and the runner detects this prefix in
+/// [`ServoWebViewDelegate::show_console_message`] to re-emit them as
+/// [`ScriptMessage`] events.
+pub(crate) const SCRIPT_MESSAGE_PREFIX: &str = "__servo_gtk_msg__";
 
 /// Marker argument used to signal that the process should run as a Servo
 /// runner subprocess rather than as the host application.
@@ -217,6 +227,63 @@ impl WebViewDelegate for ServoWebViewDelegate {
             let _ = send_event(event);
         }
     }
+
+    fn show_console_message(&self, _webview: WebView, _level: ConsoleLogLevel, message: String) {
+        // Page->native message channel bridge: injected handler shims forward
+        // messages as prefixed console messages. Detect them here and re-emit
+        // as ScriptMessage events. Non-matching console output is ignored (the
+        // separate log-message plumbing handles normal logging).
+        if let Some(event) = parse_script_message(&message) {
+            let _ = send_event(event);
+        }
+    }
+}
+
+/// Parse a console message produced by the injected script-message shim into a
+/// [`ScriptMessage`] event, or `None` if it is not a script message.
+///
+/// The shim emits `"<SCRIPT_MESSAGE_PREFIX>" + JSON.stringify({name, body})`
+/// where `body` is itself the JSON serialization of the value the page passed
+/// to `postMessage`. We forward `name` and the raw JSON `body` string.
+fn parse_script_message(message: &str) -> Option<ServoEvent> {
+    let payload = message.strip_prefix(SCRIPT_MESSAGE_PREFIX)?;
+    let value: serde_json::Value = serde_json::from_str(payload).ok()?;
+    let name = value.get("name")?.as_str()?.to_string();
+    // `body` may be any JSON value; forward its serialized form as a string.
+    let body = match value.get("body") {
+        Some(body) => body.to_string(),
+        None => "null".to_string(),
+    };
+    Some(ServoEvent {
+        event: Some(servo_event::Event::ScriptMessage(ScriptMessage {
+            name,
+            body,
+        })),
+    })
+}
+
+/// Build the JavaScript source for the message-handler shim registered for
+/// `name`. Injected as a user script, it ensures
+/// `window.servoGtk.messageHandlers.<name>.postMessage(value)` forwards the
+/// value to the native side over the console-message bridge.
+fn script_message_handler_shim(name: &str) -> String {
+    // `name` is embedded as a JSON string literal to guard against injection
+    // and to preserve exact handler names.
+    let name_literal = serde_json::to_string(name).unwrap_or_else(|_| "\"\"".to_string());
+    let prefix_literal = serde_json::to_string(SCRIPT_MESSAGE_PREFIX)
+        .unwrap_or_else(|_| "\"__servo_gtk_msg__\"".to_string());
+    format!(
+        r#"(function() {{
+  window.servoGtk = window.servoGtk || {{}};
+  window.servoGtk.messageHandlers = window.servoGtk.messageHandlers || {{}};
+  var name = {name_literal};
+  window.servoGtk.messageHandlers[name] = {{
+    postMessage: function(value) {{
+      console.log({prefix_literal} + JSON.stringify({{ name: name, body: value }}));
+    }}
+  }};
+}})();"#
+    )
 }
 
 /// Map a Servo [`LoadStatus`] to the corresponding [`ServoEvent`], if any.
@@ -325,10 +392,21 @@ pub fn run() {
     let servo_builder = ServoBuilder::default();
     let servo = servo_builder.build();
 
+    // User content manager: backs the parent-side servo_gtk::UserContentManager
+    // API (user-script/style injection and the page->native message channel).
+    let user_content_manager = Rc::new(UserContentManager::new(&servo));
+
     let delegate = Rc::new(ServoWebViewDelegate::new(rendering_context.clone()));
     let webview = WebViewBuilder::new(&servo, rendering_context)
         .delegate(delegate)
+        .user_content_manager(user_content_manager.clone())
         .build();
+
+    // Track the scripts and stylesheets we have added so that we can implement
+    // the bulk `remove_all_*` operations, which Servo's UserContentManager does
+    // not provide natively (it only supports removal by individual handle).
+    let mut user_scripts: Vec<Rc<UserScript>> = Vec::new();
+    let mut user_style_sheets: Vec<Rc<UserStyleSheet>> = Vec::new();
 
     let receiver = spawn_stdin_channel();
 
@@ -503,6 +581,64 @@ pub fn run() {
                     log::info!("Shutting down servo");
                     break;
                 }
+                servo_action::Action::AddUserScript(add_user_script) => {
+                    log::info!(
+                        "Adding user script ({} bytes)",
+                        add_user_script.source.len()
+                    );
+                    let script = Rc::new(UserScript::new(add_user_script.source, None));
+                    user_content_manager.add_script(script.clone());
+                    user_scripts.push(script);
+                }
+                servo_action::Action::AddUserStyleSheet(add_user_style_sheet) => {
+                    log::info!(
+                        "Adding user style sheet ({} bytes)",
+                        add_user_style_sheet.source.len()
+                    );
+                    // Servo requires a URL to identify the stylesheet's origin;
+                    // a synthetic about: URL is sufficient for injected styles.
+                    if let Ok(url) = Url::parse("about:user-stylesheet") {
+                        let stylesheet =
+                            Rc::new(UserStyleSheet::new(add_user_style_sheet.source, url));
+                        user_content_manager.add_stylesheet(stylesheet.clone());
+                        user_style_sheets.push(stylesheet);
+                    }
+                }
+                servo_action::Action::RemoveAllUserScripts(_) => {
+                    log::info!("Removing all user scripts");
+                    for script in user_scripts.drain(..) {
+                        user_content_manager.remove_script(script);
+                    }
+                }
+                servo_action::Action::RemoveAllUserStyleSheets(_) => {
+                    log::info!("Removing all user style sheets");
+                    for stylesheet in user_style_sheets.drain(..) {
+                        user_content_manager.remove_stylesheet(stylesheet);
+                    }
+                }
+                servo_action::Action::RegisterScriptMessageHandler(register) => {
+                    log::info!("Registering script message handler: {}", register.name);
+                    // Inject a shim user script that defines
+                    // window.servoGtk.messageHandlers.<name>.postMessage and
+                    // forwards to native over the console-message bridge.
+                    let shim = script_message_handler_shim(&register.name);
+                    let script = Rc::new(UserScript::new(shim, None));
+                    user_content_manager.add_script(script.clone());
+                    user_scripts.push(script);
+                }
+                servo_action::Action::UnregisterScriptMessageHandler(unregister) => {
+                    log::info!("Unregistering script message handler: {}", unregister.name);
+                    // Servo cannot un-inject an already-applied user script, and
+                    // does not expose per-name script identity. The handler will
+                    // stop being injected once scripts are cleared/reloaded; for
+                    // now this is a no-op beyond logging. Documented divergence.
+                }
+                servo_action::Action::EvaluateJavascript(evaluate) => {
+                    log::debug!("Evaluating JavaScript ({} bytes)", evaluate.source.len());
+                    // Fire-and-forget: the result is not currently returned to
+                    // the native side.
+                    webview.evaluate_javascript(evaluate.source, |_result| {});
+                }
             }
         }
 
@@ -545,5 +681,74 @@ mod tests {
         let event =
             load_status_to_event(LoadStatus::HeadParsed, "https://example.com/".to_string());
         assert!(event.is_none());
+    }
+
+    #[test]
+    fn parse_script_message_ignores_unprefixed_console_output() {
+        assert!(parse_script_message("just a normal log line").is_none());
+        assert!(parse_script_message("").is_none());
+    }
+
+    #[test]
+    fn parse_script_message_extracts_name_and_body_object() {
+        let payload = format!(
+            "{SCRIPT_MESSAGE_PREFIX}{}",
+            r#"{"name":"auth","body":{"type":"TOKEN","value":"abc"}}"#
+        );
+        match parse_script_message(&payload).and_then(|e| e.event) {
+            Some(servo_event::Event::ScriptMessage(msg)) => {
+                assert_eq!(msg.name, "auth");
+                // body is forwarded as its JSON serialization
+                let parsed: serde_json::Value = serde_json::from_str(&msg.body).unwrap();
+                assert_eq!(parsed["type"], "TOKEN");
+                assert_eq!(parsed["value"], "abc");
+            }
+            other => panic!("expected ScriptMessage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_script_message_handles_string_body() {
+        let payload = format!(
+            "{SCRIPT_MESSAGE_PREFIX}{}",
+            r#"{"name":"h","body":"hello"}"#
+        );
+        match parse_script_message(&payload).and_then(|e| e.event) {
+            Some(servo_event::Event::ScriptMessage(msg)) => {
+                assert_eq!(msg.name, "h");
+                assert_eq!(msg.body, "\"hello\"");
+            }
+            other => panic!("expected ScriptMessage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_script_message_rejects_prefixed_but_invalid_json() {
+        let payload = format!("{SCRIPT_MESSAGE_PREFIX}not json");
+        assert!(parse_script_message(&payload).is_none());
+    }
+
+    #[test]
+    fn parse_script_message_requires_name() {
+        let payload = format!("{SCRIPT_MESSAGE_PREFIX}{}", r#"{"body":1}"#);
+        assert!(parse_script_message(&payload).is_none());
+    }
+
+    #[test]
+    fn shim_embeds_handler_name_and_prefix() {
+        let shim = script_message_handler_shim("myHandler");
+        assert!(shim.contains("window.servoGtk"));
+        assert!(shim.contains("messageHandlers"));
+        assert!(shim.contains("\"myHandler\""));
+        assert!(shim.contains(SCRIPT_MESSAGE_PREFIX));
+        assert!(shim.contains("postMessage"));
+    }
+
+    #[test]
+    fn shim_escapes_quotes_in_handler_name() {
+        // A handler name containing a quote must not break out of the string
+        // literal in the generated JS.
+        let shim = script_message_handler_shim("a\"b");
+        assert!(shim.contains(r#""a\"b""#));
     }
 }

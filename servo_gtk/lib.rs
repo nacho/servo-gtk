@@ -6,8 +6,10 @@ pub mod key_tables;
 pub mod proto_ipc;
 pub mod runner;
 pub mod servo_runner;
+pub mod user_content;
 pub mod web_view;
 
+pub use user_content::{UserContentManager, UserScript, UserStyleSheet};
 pub use web_view::{LoadEvent, WebView};
 
 /// Hand off to the Servo runner subprocess if this process was spawned as one.

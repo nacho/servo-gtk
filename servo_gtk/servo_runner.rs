@@ -294,6 +294,68 @@ impl ServoRunner {
         });
     }
 
+    pub fn add_user_script(&self, source: &str) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::AddUserScript(
+                crate::proto_ipc::AddUserScript {
+                    source: source.to_string(),
+                },
+            )),
+        });
+    }
+
+    pub fn add_user_style_sheet(&self, source: &str) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::AddUserStyleSheet(
+                crate::proto_ipc::AddUserStyleSheet {
+                    source: source.to_string(),
+                },
+            )),
+        });
+    }
+
+    pub fn remove_all_user_scripts(&self) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::RemoveAllUserScripts(true)),
+        });
+    }
+
+    pub fn remove_all_user_style_sheets(&self) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::RemoveAllUserStyleSheets(true)),
+        });
+    }
+
+    pub fn register_script_message_handler(&self, name: &str) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::RegisterScriptMessageHandler(
+                crate::proto_ipc::RegisterScriptMessageHandler {
+                    name: name.to_string(),
+                },
+            )),
+        });
+    }
+
+    pub fn unregister_script_message_handler(&self, name: &str) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::UnregisterScriptMessageHandler(
+                crate::proto_ipc::UnregisterScriptMessageHandler {
+                    name: name.to_string(),
+                },
+            )),
+        });
+    }
+
+    pub fn evaluate_javascript(&self, source: &str) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::EvaluateJavascript(
+                crate::proto_ipc::EvaluateJavascript {
+                    source: source.to_string(),
+                },
+            )),
+        });
+    }
+
     pub fn handle_log_message(&self, level: LogLevel, message: &str) {
         match level {
             LogLevel::Debug => debug!("{}", message),
