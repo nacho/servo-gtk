@@ -5,13 +5,12 @@
 use crate::key_tables::KeyTables;
 use crate::proto_ipc::{ServoEvent, servo_event};
 use crate::servo_runner::{LogLevel, ServoRunner};
-use glib::info;
 use glib::translate::*;
+use glib::{info, warn};
 use gtk::gdk;
 use gtk::prelude::*;
 use gtk::{glib, subclass::prelude::*};
-use image::RgbaImage;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 const G_LOG_DOMAIN: &str = "ServoGtk";
 
@@ -23,6 +22,7 @@ mod imp {
         pub servo_runner: RefCell<Option<ServoRunner>>,
         pub memory_texture: RefCell<Option<gdk::MemoryTexture>>,
         pub key_tables: KeyTables,
+        pub last_size: Cell<(i32, i32)>,
     }
 
     #[glib::object_subclass]
@@ -44,10 +44,29 @@ mod imp {
             let obj_weak = self.obj().downgrade();
             glib::spawn_future_local(async move {
                 while let Ok(event) = event_receiver.recv().await {
-                    if let Some(obj) = obj_weak.upgrade() {
-                        obj.process_servo_event(event);
-                    } else {
+                    let Some(obj) = obj_weak.upgrade() else {
                         break;
+                    };
+
+                    // Take everything that queued up while the main loop was
+                    // busy. Only the newest frame is ever visible, so older
+                    // ones are dropped rather than decoded into textures that
+                    // would be overdrawn before they reach the screen.
+                    let mut batch = vec![event];
+                    while let Ok(next) = event_receiver.try_recv() {
+                        batch.push(next);
+                    }
+                    let newest_frame = batch.iter().rposition(|event| {
+                        matches!(event.event, Some(servo_event::Event::FrameReady(_)))
+                    });
+
+                    for (index, event) in batch.into_iter().enumerate() {
+                        let is_frame =
+                            matches!(event.event, Some(servo_event::Event::FrameReady(_)));
+                        if is_frame && Some(index) != newest_frame {
+                            continue;
+                        }
+                        obj.process_servo_event(event);
                     }
                 }
             });
@@ -176,6 +195,13 @@ mod imp {
         }
 
         fn size_allocate(&self, width: i32, height: i32, _baseline: i32) {
+            // GTK allocates on every layout pass. Forwarding an unchanged size
+            // would cost an IPC round trip and a full Servo reflow each time.
+            if self.last_size.get() == (width, height) {
+                return;
+            }
+            self.last_size.set((width, height));
+
             if let Some(servo) = self.servo_runner.borrow().as_ref() {
                 servo.resize(width as u32, height as u32);
             }
@@ -245,25 +271,32 @@ impl WebView {
 
         match event_type {
             servo_event::Event::FrameReady(frame_ready) => {
-                let rgba_image = RgbaImage::from_raw(
-                    frame_ready.width,
-                    frame_ready.height,
-                    frame_ready.rgba_data,
-                )
-                .unwrap();
+                let width = frame_ready.width;
+                let height = frame_ready.height;
+                let stride = width as usize * 4;
 
-                let imp = self.imp();
+                // A short read on the pipe would otherwise panic here.
+                if frame_ready.rgba_data.len() != stride * height as usize {
+                    warn!(
+                        "Discarding malformed frame: {width}x{height} with {} bytes",
+                        frame_ready.rgba_data.len()
+                    );
+                    return;
+                }
 
-                let bytes = glib::Bytes::from(&rgba_image.as_raw()[..]);
+                // `Bytes::from_owned` takes the buffer over as-is. Going
+                // through `&[u8]` would call `g_bytes_new`, copying the whole
+                // framebuffer a second time on the main thread.
+                let bytes = glib::Bytes::from_owned(frame_ready.rgba_data);
                 let texture = gdk::MemoryTexture::new(
-                    rgba_image.width() as i32,
-                    rgba_image.height() as i32,
+                    width as i32,
+                    height as i32,
                     gdk::MemoryFormat::R8g8b8a8,
                     &bytes,
-                    (rgba_image.width() * 4) as usize,
+                    stride,
                 );
 
-                imp.memory_texture.replace(Some(texture));
+                self.imp().memory_texture.replace(Some(texture));
                 self.queue_draw();
             }
             servo_event::Event::CursorChanged(cursor_changed) => {

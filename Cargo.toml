@@ -17,8 +17,6 @@ glib = { version = "0.22", features = ["v2_74", "log_macros"] }
 gtk = { package="gtk4", version="0.11", features=["v4_10"] }
 servo = { git = "https://github.com/servo/servo.git", rev = "e8dbc1dfbf6f58621346a5f61ab7a17d01387873" }
 servo-embedder-traits = { git = "https://github.com/servo/servo.git", rev = "e8dbc1dfbf6f58621346a5f61ab7a17d01387873" }
-surfman = { version = "0.9", features = ["chains", "sm-angle", "sm-angle-default"] }
-gl = "0.14.0"
 epoxy = "0.1.0"
 libloading = "0.8.8"
 euclid = "0.22"
@@ -27,10 +25,8 @@ dpi = "0.1"
 rustls = { version = "0.23.12", default-features = false, features = ["aws-lc-rs"] }
 async-channel = "2.5.0"
 log = "0.4.0"
-image = "0.25"
 keyboard-types = "0.8"
 prost = "0.13"
-bytes = "1.0"
 
 [build-dependencies]
 prost-build = "0.13"

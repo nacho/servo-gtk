@@ -11,8 +11,11 @@
 //! process was spawned as a runner, control is handed off here and never
 //! returns to the normal application startup path.
 
+use std::fs::File;
 use std::io::{self, Read, Write};
+use std::os::fd::BorrowedFd;
 use std::rc::Rc;
+use std::sync::{Mutex, OnceLock};
 
 use core::time::Duration;
 use dpi::PhysicalSize;
@@ -32,8 +35,8 @@ use std::thread;
 use url::Url;
 
 use crate::proto_ipc::{
-    CursorChanged, FrameReady, LogLevel, LogMessage, ServoAction, ServoEvent, servo_action,
-    servo_event,
+    CursorChanged, FrameReady, LogLevel, LogMessage, ServoAction, ServoEvent, encode_framed,
+    servo_action, servo_event,
 };
 
 /// Marker argument used to signal that the process should run as a Servo
@@ -80,11 +83,15 @@ impl EventLogger {
 }
 
 impl log::Log for EventLogger {
-    fn enabled(&self, _metadata: &log::Metadata) -> bool {
-        true
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::max_level()
     }
 
     fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+
         let level = match record.level() {
             log::Level::Error => LogLevel::Error,
             log::Level::Warn => LogLevel::Warn,
@@ -104,11 +111,52 @@ impl log::Log for EventLogger {
     fn flush(&self) {}
 }
 
+/// Maximum log level for the runner, overridable with `SERVO_GTK_LOG`.
+///
+/// This defaults to `Warn` deliberately. Every record produced here is
+/// formatted into a `String`, encoded, pushed through the IPC pipe and
+/// re-logged on the host's GTK main thread, so a permissive level is not a
+/// passive cost: at `Debug`, Servo's style system emits a record per selector
+/// match per element and the host's UI thread saturates handling them.
+fn max_log_level() -> log::LevelFilter {
+    match std::env::var("SERVO_GTK_LOG") {
+        Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "off" => log::LevelFilter::Off,
+            "error" => log::LevelFilter::Error,
+            "warn" => log::LevelFilter::Warn,
+            "info" => log::LevelFilter::Info,
+            "debug" => log::LevelFilter::Debug,
+            "trace" => log::LevelFilter::Trace,
+            _ => log::LevelFilter::Warn,
+        },
+        Err(_) => log::LevelFilter::Warn,
+    }
+}
+
+/// The write end of the IPC pipe.
+///
+/// `io::stdout()` is a `LineWriter`, which scans every buffer it is given for a
+/// newline; on a multi-megabyte frame that is a pointless pass over the whole
+/// payload, and it leaves the bytes after the last newline sitting in the
+/// buffer until some later write flushes them. A plain `File` on a dup of fd 1
+/// writes each message straight through instead.
+fn event_pipe() -> &'static Mutex<File> {
+    static PIPE: OnceLock<Mutex<File>> = OnceLock::new();
+    PIPE.get_or_init(|| {
+        let stdout = unsafe { BorrowedFd::borrow_raw(1) };
+        let owned = stdout
+            .try_clone_to_owned()
+            .expect("Failed to duplicate stdout");
+        Mutex::new(File::from(owned))
+    })
+}
+
 fn send_event(event: ServoEvent) -> std::io::Result<()> {
-    let encoded = event.encode_to_vec();
-    let len = (encoded.len() as u32).to_le_bytes();
-    io::stdout().write_all(&len)?;
-    io::stdout().write_all(&encoded)
+    let framed = encode_framed(&event);
+    event_pipe()
+        .lock()
+        .expect("Event pipe mutex poisoned")
+        .write_all(&framed)
 }
 
 struct ServoWebViewDelegate {
@@ -259,13 +307,50 @@ fn convert_key_event(
     KeyboardEvent::new_without_event(state, key, code, location, modifiers, false, false)
 }
 
+/// How long an otherwise idle iteration waits for input before spinning the
+/// Servo event loop again.
+const SPIN_INTERVAL: Duration = Duration::from_millis(5);
+
+/// Upper bound on log messages forwarded per iteration, so that a chatty log
+/// level cannot starve input handling or the Servo event loop.
+const MAX_LOG_MESSAGES_PER_ITERATION: usize = 256;
+
+/// Queue `action` for processing, merging it into the previous one when the
+/// intermediate states carry no information.
+///
+/// Pointer motion is absolute, so only the newest position matters, and scroll
+/// deltas are additive, so a burst applies as one larger delta. Only runs of
+/// the same kind merge, which keeps every event ordered against the clicks and
+/// key presses around it.
+fn push_coalesced(pending: &mut Vec<servo_action::Action>, action: ServoAction) {
+    let Some(action) = action.action else {
+        return;
+    };
+
+    match (pending.last_mut(), &action) {
+        (Some(servo_action::Action::Motion(last)), servo_action::Action::Motion(new)) => {
+            last.x = new.x;
+            last.y = new.y;
+            return;
+        }
+        (Some(servo_action::Action::Scroll(last)), servo_action::Action::Scroll(new)) => {
+            last.dx += new.dx;
+            last.dy += new.dy;
+            return;
+        }
+        _ => {}
+    }
+
+    pending.push(action);
+}
+
 /// Run the Servo runner event loop. This blocks until a shutdown action is
 /// received or the IPC pipes are closed.
 pub fn run() {
     let (event_logger, log_receiver) = EventLogger::new();
 
     log::set_logger(Box::leak(Box::new(event_logger))).expect("Failed to set logger");
-    log::set_max_level(log::LevelFilter::Debug);
+    log::set_max_level(max_log_level());
 
     init_crypto();
 
@@ -288,16 +373,33 @@ pub fn run() {
 
     loop {
         // Process queued log messages
-        while let Ok(log_message) = log_receiver.try_recv() {
+        for _ in 0..MAX_LOG_MESSAGES_PER_ITERATION {
+            let Ok(log_message) = log_receiver.try_recv() else {
+                break;
+            };
             let event = ServoEvent {
                 event: Some(servo_event::Event::LogMessage(log_message)),
             };
             let _ = send_event(event);
         }
 
-        if let Ok(action) = receiver.try_recv()
-            && let Some(action_type) = action.action
-        {
+        // Block briefly for input, then drain everything else already queued.
+        // Handling one action per iteration and sleeping in between capped
+        // input at 200 actions/second, so a burst of motion or scroll events
+        // took hundreds of milliseconds to work through and lagged visibly
+        // behind the pointer.
+        let mut pending = Vec::new();
+        match receiver.recv_timeout(SPIN_INTERVAL) {
+            Ok(action) => push_coalesced(&mut pending, action),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        while let Ok(action) = receiver.try_recv() {
+            push_coalesced(&mut pending, action);
+        }
+
+        let mut shutdown = false;
+        for action_type in pending {
             match action_type {
                 servo_action::Action::LoadUrl(load_url) => {
                     log::info!("Loading URL: {}", load_url.url);
@@ -455,15 +557,17 @@ pub fn run() {
                 }
                 servo_action::Action::Shutdown(_) => {
                     log::info!("Shutting down servo");
+                    shutdown = true;
                     break;
                 }
             }
         }
 
+        if shutdown {
+            break;
+        }
+
         // Spin servo event loop
         servo.spin_event_loop();
-
-        // FIXME: we need a better way to not have a busy loop
-        std::thread::sleep(Duration::from_millis(5));
     }
 }
