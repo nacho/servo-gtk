@@ -82,11 +82,15 @@ impl EventLogger {
 }
 
 impl log::Log for EventLogger {
-    fn enabled(&self, _metadata: &log::Metadata) -> bool {
-        true
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::max_level()
     }
 
     fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+
         let level = match record.level() {
             log::Level::Error => LogLevel::Error,
             log::Level::Warn => LogLevel::Warn,
@@ -104,6 +108,24 @@ impl log::Log for EventLogger {
     }
 
     fn flush(&self) {}
+}
+
+/// Maximum log level for the runner, overridable with `SERVO_GTK_LOG`.
+///
+/// This defaults to `Warn` as the logging is very expensive.
+fn max_log_level() -> log::LevelFilter {
+    match std::env::var("SERVO_GTK_LOG") {
+        Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "off" => log::LevelFilter::Off,
+            "error" => log::LevelFilter::Error,
+            "warn" | "warning" => log::LevelFilter::Warn,
+            "info" => log::LevelFilter::Info,
+            "debug" => log::LevelFilter::Debug,
+            "trace" => log::LevelFilter::Trace,
+            _ => log::LevelFilter::Warn,
+        },
+        Err(_) => log::LevelFilter::Warn,
+    }
 }
 
 fn send_event(event: ServoEvent) -> std::io::Result<()> {
@@ -312,7 +334,7 @@ pub fn run() {
     let (event_logger, log_receiver) = EventLogger::new();
 
     log::set_logger(Box::leak(Box::new(event_logger))).expect("Failed to set logger");
-    log::set_max_level(log::LevelFilter::Debug);
+    log::set_max_level(max_log_level());
 
     init_crypto();
 
