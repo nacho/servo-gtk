@@ -11,7 +11,9 @@
 //! process was spawned as a runner, control is handed off here and never
 //! returns to the normal application startup path.
 
+use std::fs::File;
 use std::io::{self, Read, Write};
+use std::os::fd::BorrowedFd;
 use std::rc::Rc;
 
 use core::time::Duration;
@@ -138,20 +140,54 @@ fn max_log_level() -> log::LevelFilter {
     }
 }
 
-fn send_event(event: ServoEvent) -> std::io::Result<()> {
-    let encoded = event.encode_to_vec();
-    let len = (encoded.len() as u32).to_le_bytes();
-    io::stdout().write_all(&len)?;
-    io::stdout().write_all(&encoded)
+/// The write end of the IPC pipe.
+///
+/// `io::stdout()` is a `LineWriter`, which scans every buffer it is given for a
+/// newline; on a multi-megabyte frame that is a pointless pass over the whole
+/// payload, and it leaves the bytes after the last newline sitting in the
+/// buffer until some later write flushes them. A plain `File` on a dup of fd 1
+/// writes straight through instead of buffering.
+///
+/// This is intentionally made !Send, so that only one thread can actually write
+/// to stdout (unless `io::stdout()` is used, of course).
+#[derive(Clone)]
+struct EventPipe {
+    file: Rc<File>,
+}
+
+impl EventPipe {
+    fn from_stdout() -> Self {
+        let stdout = unsafe { BorrowedFd::borrow_raw(1) };
+        let owned = stdout
+            .try_clone_to_owned()
+            .expect("Failed to duplicate stdout");
+
+        Self {
+            file: Rc::new(File::from(owned)),
+        }
+    }
+
+    fn send(&self, event: ServoEvent) -> std::io::Result<()> {
+        let encoded = event.encode_to_vec();
+        let len = (encoded.len() as u32).to_le_bytes();
+
+        let mut file = &*self.file;
+        file.write_all(&len)?;
+        file.write_all(&encoded)
+    }
 }
 
 struct ServoWebViewDelegate {
     rendering_context: Rc<dyn RenderingContext>,
+    event_pipe: EventPipe,
 }
 
 impl ServoWebViewDelegate {
-    fn new(rendering_context: Rc<dyn RenderingContext>) -> Self {
-        Self { rendering_context }
+    fn new(rendering_context: Rc<dyn RenderingContext>, event_pipe: EventPipe) -> Self {
+        Self {
+            rendering_context,
+            event_pipe,
+        }
     }
 }
 
@@ -174,7 +210,7 @@ impl WebViewDelegate for ServoWebViewDelegate {
                     height,
                 })),
             };
-            let _ = send_event(event);
+            let _ = self.event_pipe.send(event);
         }
     }
 
@@ -221,7 +257,7 @@ impl WebViewDelegate for ServoWebViewDelegate {
                 cursor: cursor_str.to_string(),
             })),
         };
-        let _ = send_event(event);
+        let _ = self.event_pipe.send(event);
     }
 
     fn notify_url_changed(&self, _webview: WebView, url: Url) {
@@ -230,7 +266,7 @@ impl WebViewDelegate for ServoWebViewDelegate {
                 url: url.to_string(),
             })),
         };
-        let _ = send_event(event);
+        let _ = self.event_pipe.send(event);
     }
 
     fn notify_page_title_changed(&self, _webview: WebView, title: Option<String>) {
@@ -239,7 +275,7 @@ impl WebViewDelegate for ServoWebViewDelegate {
                 title: title.unwrap_or_default(),
             })),
         };
-        let _ = send_event(event);
+        let _ = self.event_pipe.send(event);
     }
 
     fn notify_load_status_changed(&self, webview: WebView, status: LoadStatus) {
@@ -247,7 +283,7 @@ impl WebViewDelegate for ServoWebViewDelegate {
         // very early in a load, in which case we send an empty string.
         let url = webview.url().map(|u| u.to_string()).unwrap_or_default();
         if let Some(event) = load_status_to_event(status, url) {
-            let _ = send_event(event);
+            let _ = self.event_pipe.send(event);
         }
     }
 
@@ -257,7 +293,7 @@ impl WebViewDelegate for ServoWebViewDelegate {
         // as ScriptMessage events. Non-matching console output is ignored (the
         // separate log-message plumbing handles normal logging).
         if let Some(event) = parse_script_message(&message) {
-            let _ = send_event(event);
+            let _ = self.event_pipe.send(event);
         }
     }
 }
@@ -419,7 +455,12 @@ pub fn run() {
     // API (user-script/style injection and the page->native message channel).
     let user_content_manager = Rc::new(UserContentManager::new(&servo));
 
-    let delegate = Rc::new(ServoWebViewDelegate::new(rendering_context.clone()));
+    let event_pipe = EventPipe::from_stdout();
+    let delegate = Rc::new(ServoWebViewDelegate::new(
+        rendering_context.clone(),
+        event_pipe.clone(),
+    ));
+
     let webview = WebViewBuilder::new(&servo, rendering_context)
         .delegate(delegate)
         .user_content_manager(user_content_manager.clone())
@@ -439,7 +480,7 @@ pub fn run() {
             let event = ServoEvent {
                 event: Some(servo_event::Event::LogMessage(log_message)),
             };
-            let _ = send_event(event);
+            let _ = event_pipe.send(event);
         }
 
         if let Ok(action) = receiver.try_recv()
