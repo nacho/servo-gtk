@@ -112,14 +112,21 @@ impl ServoRunner {
 
     fn send_action(&self, action: ServoAction) {
         let stdin = self.stdin.clone();
+
+        // Write a message as a one shot, so that futures do not
+        // get accidentally interleaved, corrupting the message
+        // sequence.
+        let len = action.encoded_len();
+        let mut framed = Vec::with_capacity(4 + len);
+
+        framed.extend_from_slice(&(len as u32).to_le_bytes());
+        action
+            .encode(&mut framed)
+            .expect("encoding into a Vec cannot fail");
+
         glib::spawn_future_local(async move {
-            let encoded = action.encode_to_vec();
-            let len = (encoded.len() as u32).to_le_bytes();
             let _ = stdin
-                .write_all_future(len.to_vec(), glib::Priority::DEFAULT)
-                .await;
-            let _ = stdin
-                .write_all_future(encoded, glib::Priority::DEFAULT)
+                .write_all_future(framed, glib::Priority::DEFAULT)
                 .await;
         });
     }
