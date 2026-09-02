@@ -28,7 +28,7 @@ use servo::user_contents::UserStyleSheet;
 use servo::{ConsoleLogLevel, UserContentManager, UserScript};
 use servo::{
     DeviceIntRect, DeviceVector2D, InputEvent, KeyboardEvent, MouseButton, MouseButtonAction,
-    MouseButtonEvent, MouseMoveEvent, Scroll, ServoBuilder,
+    MouseButtonEvent, MouseMoveEvent, Opts, Scroll, ServoBuilder,
 };
 use servo::{RenderingContext, SoftwareRenderingContext, WebView, WebViewBuilder, WebViewDelegate};
 use std::str::FromStr;
@@ -448,7 +448,26 @@ pub fn run() {
         SoftwareRenderingContext::new(size).expect("Failed to create Software rendering context"),
     );
 
-    let servo_builder = ServoBuilder::default();
+    // Give Servo a persistent, per-user config directory. Without this, Servo
+    // falls back to a throwaway `tempfile` directory under /tmp for its storage
+    // engines (ClientStorage, WebStorage, cache), which is non-persistent and
+    // prone to a "unable to open database file" (SqliteFailure CannotOpen)
+    // warning when that temp dir is reaped before the storage thread opens it.
+    //
+    // We mirror servoshell's behaviour: compute a stable config dir, ensure it
+    // exists, and pass it through `Opts`. `glib::user_config_dir()` wraps
+    // `g_get_user_config_dir()` (respects XDG_CONFIG_HOME, defaults to
+    // ~/.config on Linux).
+    let config_dir = glib::user_config_dir().join("servo-gtk");
+    if let Err(error) = std::fs::create_dir_all(&config_dir) {
+        log::warn!("Failed to create servo-gtk config dir {config_dir:?}: {error}");
+    }
+
+    let opts = Opts {
+        config_dir: Some(config_dir),
+        ..Default::default()
+    };
+    let servo_builder = ServoBuilder::default().opts(opts);
     let servo = servo_builder.build();
 
     // User content manager: backs the parent-side servo_gtk::UserContentManager
