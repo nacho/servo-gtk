@@ -431,9 +431,37 @@ fn convert_key_event(
     KeyboardEvent::new_without_event(state, key, code, location, modifiers, false, false)
 }
 
+/// Queue `action` for processing, merging it into the previous one when the
+/// intermediate states carry no information.
+fn push_coalesced_input(pending: &mut Vec<servo_action::Action>, action: ServoAction) {
+    let Some(action) = action.action else {
+        return;
+    };
+
+    match (pending.last_mut(), &action) {
+        (Some(servo_action::Action::Motion(last)), servo_action::Action::Motion(new)) => {
+            last.x = new.x;
+            last.y = new.y;
+            return;
+        }
+        (Some(servo_action::Action::Scroll(last)), servo_action::Action::Scroll(new)) => {
+            last.dx += new.dx;
+            last.dy += new.dy;
+            return;
+        }
+        _ => {}
+    }
+
+    pending.push(action);
+}
+
 /// Run the Servo runner event loop. This blocks until a shutdown action is
 /// received or the IPC pipes are closed.
 pub fn run() {
+    /// How long an otherwise idle iteration waits for input before
+    /// spinning the Servo event loop again.
+    const SPIN_INTERVAL: Duration = Duration::from_millis(5);
+
     let (event_logger, log_receiver) = EventLogger::new();
 
     log::set_logger(Box::leak(Box::new(event_logger))).expect("Failed to set logger");
@@ -493,7 +521,7 @@ pub fn run() {
 
     let receiver = spawn_stdin_channel();
 
-    loop {
+    'event_loop: loop {
         // Process queued log messages
         while let Ok(log_message) = log_receiver.try_recv() {
             let event = ServoEvent {
@@ -502,9 +530,18 @@ pub fn run() {
             let _ = event_pipe.send(event);
         }
 
-        if let Ok(action) = receiver.try_recv()
-            && let Some(action_type) = action.action
-        {
+        // Block briefly for input, then drain everything else already queued.
+        let mut pending = Vec::new();
+        match receiver.recv_timeout(SPIN_INTERVAL) {
+            Ok(action) => push_coalesced_input(&mut pending, action),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        while let Ok(action) = receiver.try_recv() {
+            push_coalesced_input(&mut pending, action);
+        }
+
+        for action_type in pending {
             match action_type {
                 servo_action::Action::LoadUrl(load_url) => {
                     log::info!("Loading URL: {}", load_url.url);
@@ -662,7 +699,7 @@ pub fn run() {
                 }
                 servo_action::Action::Shutdown(_) => {
                     log::info!("Shutting down servo");
-                    break;
+                    break 'event_loop;
                 }
                 servo_action::Action::AddUserScript(add_user_script) => {
                     log::info!(
@@ -727,9 +764,6 @@ pub fn run() {
 
         // Spin servo event loop
         servo.spin_event_loop();
-
-        // FIXME: we need a better way to not have a busy loop
-        std::thread::sleep(Duration::from_millis(5));
     }
 }
 
