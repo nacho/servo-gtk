@@ -9,6 +9,10 @@ use gio::{OutputStream, Subprocess, SubprocessFlags, SubprocessLauncher};
 use glib::{debug, error, info, warn};
 use prost::Message;
 use std::ffi::OsStr;
+use std::fs::File;
+use std::io::Read;
+use std::os::fd::BorrowedFd;
+use std::thread;
 
 use crate::proto_ipc::{ServoAction, ServoEvent, servo_action};
 
@@ -32,6 +36,46 @@ impl From<i32> for LogLevel {
             _ => LogLevel::Info,
         }
     }
+}
+
+/// How many events may sit between the reader thread and the GTK main loop.
+const EVENT_QUEUE_CAPACITY: usize = 64;
+
+/// Duplicate a gio pipe's file descriptor into an owned [`File`].
+fn dup_pipe<T: IsA<glib::Object>>(stream: &T, name: &str) -> File {
+    let fd: i32 = stream.property("fd");
+    let owned = unsafe { BorrowedFd::borrow_raw(fd) }
+        .try_clone_to_owned()
+        .unwrap_or_else(|error| panic!("Failed to duplicate servo runner {name}: {error}"));
+    File::from(owned)
+}
+
+/// Read length-prefixed events off the runner's stdout on a dedicated thread.
+fn spawn_event_reader(mut stdout: File, sender: async_channel::Sender<ServoEvent>) {
+    thread::spawn(move || {
+        // Reused across messages so a steady frame stream does not reallocate.
+        let mut msg_buf = Vec::new();
+        loop {
+            let mut len_buf = [0u8; 4];
+            if stdout.read_exact(&mut len_buf).is_err() {
+                break;
+            }
+            let len = u32::from_le_bytes(len_buf) as usize;
+
+            msg_buf.clear();
+            msg_buf.resize(len, 0);
+            if stdout.read_exact(&mut msg_buf).is_err() {
+                break;
+            }
+
+            let Ok(event) = ServoEvent::decode_from_slice(&msg_buf) else {
+                continue;
+            };
+            if sender.send_blocking(event).is_err() {
+                break;
+            }
+        }
+    });
 }
 
 pub struct ServoRunner {
@@ -62,46 +106,10 @@ impl ServoRunner {
         let stdin = subprocess.stdin_pipe().expect("Failed to get stdin");
         let stdout = subprocess.stdout_pipe().expect("Failed to get stdout");
 
-        let (event_sender, event_receiver) = async_channel::unbounded();
+        let stdout = dup_pipe(&stdout, "stdout");
 
-        // Async task to receive events from process
-        glib::spawn_future_local(glib::clone!(
-            #[strong]
-            stdout,
-            async move {
-                loop {
-                    // Read 4-byte length prefix
-                    let len_buf = vec![0u8; 4];
-                    match stdout
-                        .read_all_future(len_buf, glib::Priority::DEFAULT)
-                        .await
-                    {
-                        Ok((len_buf, _, _)) => {
-                            let len = u32::from_le_bytes([
-                                len_buf[0], len_buf[1], len_buf[2], len_buf[3],
-                            ]) as usize;
-
-                            // Read message data
-                            let msg_buf = vec![0u8; len];
-                            match stdout
-                                .read_all_future(msg_buf, glib::Priority::DEFAULT)
-                                .await
-                            {
-                                Ok((msg_buf, _, _)) => {
-                                    if let Ok(event) = ServoEvent::decode_from_slice(&msg_buf)
-                                        && event_sender.send(event).await.is_err()
-                                    {
-                                        break;
-                                    }
-                                }
-                                Err(_) => break,
-                            }
-                        }
-                        Err(_) => break,
-                    }
-                }
-            }
-        ));
+        let (event_sender, event_receiver) = async_channel::bounded(EVENT_QUEUE_CAPACITY);
+        spawn_event_reader(stdout, event_sender);
 
         Self {
             stdin,
