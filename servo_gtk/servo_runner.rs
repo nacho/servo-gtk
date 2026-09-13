@@ -5,13 +5,14 @@
 use crate::key_tables::KeyLocation;
 use async_channel;
 use gio::prelude::*;
-use gio::{OutputStream, Subprocess, SubprocessFlags, SubprocessLauncher};
+use gio::{Subprocess, SubprocessFlags, SubprocessLauncher};
 use glib::{debug, error, info, warn};
 use prost::Message;
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::os::fd::BorrowedFd;
+use std::sync::mpsc;
 use std::thread;
 
 use crate::proto_ipc::{ServoAction, ServoEvent, servo_action};
@@ -56,7 +57,7 @@ fn spawn_event_reader(mut stdout: File, sender: async_channel::Sender<ServoEvent
         // Reused across messages so a steady frame stream does not reallocate.
         let mut msg_buf = Vec::new();
         loop {
-            let mut len_buf = [0u8; 4];
+            let mut len_buf = [0u8; size_of::<u32>()];
             if stdout.read_exact(&mut len_buf).is_err() {
                 break;
             }
@@ -78,8 +79,31 @@ fn spawn_event_reader(mut stdout: File, sender: async_channel::Sender<ServoEvent
     });
 }
 
+/// Write actions to the runner's stdin on a dedicated thread.
+fn spawn_action_writer(mut stdin: File) -> mpsc::Sender<ServoAction> {
+    let (sender, receiver) = mpsc::channel::<ServoAction>();
+    thread::spawn(move || {
+        // Reused across actions so a steady stream of motion events does not
+        // reallocate.
+        let mut framed = Vec::new();
+        while let Ok(action) = receiver.recv() {
+            let len = action.encoded_len();
+            framed.clear();
+            framed.reserve(size_of::<u32>() + len);
+            framed.extend_from_slice(&(len as u32).to_le_bytes());
+            action
+                .encode(&mut framed)
+                .expect("encoding into a Vec cannot fail");
+            if stdin.write_all(&framed).is_err() {
+                break;
+            }
+        }
+    });
+    sender
+}
+
 pub struct ServoRunner {
-    stdin: OutputStream,
+    action_sender: mpsc::Sender<ServoAction>,
     event_receiver: async_channel::Receiver<ServoEvent>,
     _subprocess: Subprocess,
 }
@@ -106,37 +130,22 @@ impl ServoRunner {
         let stdin = subprocess.stdin_pipe().expect("Failed to get stdin");
         let stdout = subprocess.stdout_pipe().expect("Failed to get stdout");
 
+        let stdin = dup_pipe(&stdin, "stdin");
         let stdout = dup_pipe(&stdout, "stdout");
 
         let (event_sender, event_receiver) = async_channel::bounded(EVENT_QUEUE_CAPACITY);
         spawn_event_reader(stdout, event_sender);
+        let action_sender = spawn_action_writer(stdin);
 
         Self {
-            stdin,
+            action_sender,
             event_receiver,
             _subprocess: subprocess,
         }
     }
 
     fn send_action(&self, action: ServoAction) {
-        let stdin = self.stdin.clone();
-
-        // Write a message as a one shot, so that futures do not
-        // get accidentally interleaved, corrupting the message
-        // sequence.
-        let len = action.encoded_len();
-        let mut framed = Vec::with_capacity(4 + len);
-
-        framed.extend_from_slice(&(len as u32).to_le_bytes());
-        action
-            .encode(&mut framed)
-            .expect("encoding into a Vec cannot fail");
-
-        glib::spawn_future_local(async move {
-            let _ = stdin
-                .write_all_future(framed, glib::Priority::DEFAULT)
-                .await;
-        });
+        let _ = self.action_sender.send(action);
     }
 
     pub fn event_receiver(&self) -> async_channel::Receiver<ServoEvent> {
