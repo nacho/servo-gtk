@@ -139,6 +139,8 @@ fn main() -> glib::ExitCode {
                  <button onclick=\"document.getElementById('o').textContent = \
                  prompt('Type something:', 'default text')\">prompt()</button>\
                  </p>\
+                 <p><input type=\"file\" onchange=\"document.getElementById('o').textContent = \
+                 this.value\"> (file chooser)</p>\
                  <p>Result: <span id=\"o\"></span></p>\
                  </body></html>",
                 None,

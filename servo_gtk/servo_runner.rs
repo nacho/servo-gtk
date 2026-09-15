@@ -437,6 +437,21 @@ impl ServoRunner {
         });
     }
 
+    /// Answer a file chooser request identified by `request_id` with the
+    /// selected `paths`. An empty list means the user cancelled.
+    pub fn send_file_chooser_response(&self, request_id: u64, paths: Vec<String>) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::Response(
+                crate::proto_ipc::ServoResponse {
+                    request_id,
+                    payload: Some(crate::proto_ipc::servo_response::Payload::FileChooser(
+                        crate::proto_ipc::FileChooserResponse { paths },
+                    )),
+                },
+            )),
+        });
+    }
+
     pub fn handle_log_message(&self, level: LogLevel, message: &str) {
         match level {
             LogLevel::Debug => debug!("{}", message),

@@ -3,7 +3,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use crate::key_tables::KeyTables;
-use crate::proto_ipc::{ScriptDialogKind, ScriptDialogRequest, ServoEvent, servo_event};
+use crate::proto_ipc::{
+    FileChooserRequest, ScriptDialogKind, ScriptDialogRequest, ServoEvent, servo_event,
+};
 use crate::servo_runner::{LogLevel, ServoRunner};
 use crate::user_content::UserContentManager;
 use glib::info;
@@ -567,6 +569,50 @@ impl WebView {
         window.present();
     }
 
+    /// Present a native file chooser for a `<input type=file>` element and send
+    /// the selected path(s) back to the runner. Cancelling yields an empty
+    /// selection.
+    fn show_file_chooser(&self, request: FileChooserRequest) {
+        let request_id = request.request_id;
+        let parent = gtk::prelude::WidgetExt::root(self).and_downcast::<gtk::Window>();
+        let dialog = gtk::FileDialog::builder().modal(true).build();
+
+        let obj_weak = self.downgrade();
+        let reply = move |paths: Vec<String>| {
+            if let Some(obj) = obj_weak.upgrade()
+                && let Some(servo) = obj.imp().servo_runner.borrow().as_ref()
+            {
+                servo.send_file_chooser_response(request_id, paths);
+            }
+        };
+
+        if request.allow_multiple {
+            dialog.open_multiple(parent.as_ref(), gio::Cancellable::NONE, move |result| {
+                let mut paths = Vec::new();
+                if let Ok(files) = result {
+                    for i in 0..files.n_items() {
+                        if let Some(file) = files.item(i).and_downcast::<gio::File>()
+                            && let Some(path) = file.path()
+                        {
+                            paths.push(path.to_string_lossy().into_owned());
+                        }
+                    }
+                }
+                reply(paths);
+            });
+        } else {
+            dialog.open(parent.as_ref(), gio::Cancellable::NONE, move |result| {
+                let mut paths = Vec::new();
+                if let Ok(file) = result
+                    && let Some(path) = file.path()
+                {
+                    paths.push(path.to_string_lossy().into_owned());
+                }
+                reply(paths);
+            });
+        }
+    }
+
     fn process_servo_event(&self, event: ServoEvent) {
         let Some(event_type) = event.event else {
             return;
@@ -647,6 +693,9 @@ impl WebView {
             }
             servo_event::Event::ScriptDialogRequest(request) => {
                 self.show_script_dialog(request);
+            }
+            servo_event::Event::FileChooserRequest(request) => {
+                self.show_file_chooser(request);
             }
         }
     }
