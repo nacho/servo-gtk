@@ -389,6 +389,35 @@ impl ServoRunner {
         });
     }
 
+    /// Start a request/response round trip that exercises the bidirectional
+    /// IPC channel end to end. The runner replies with a `PingRequest` event,
+    /// which the [`WebView`](crate::WebView) answers via
+    /// [`send_ping_response`](Self::send_ping_response).
+    pub fn ping(&self) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::Ping(crate::proto_ipc::Ping {})),
+        });
+    }
+
+    /// Answer a runner request identified by `request_id` with a ping payload.
+    ///
+    /// This is the return path of the bidirectional channel: the runner
+    /// correlates the response to the pending request it stashed under the same
+    /// id. Real delegate features add their own typed `send_*_response`
+    /// helpers alongside this one.
+    pub fn send_ping_response(&self, request_id: u64, ok: bool) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::Response(
+                crate::proto_ipc::ServoResponse {
+                    request_id,
+                    payload: Some(crate::proto_ipc::servo_response::Payload::Ping(
+                        crate::proto_ipc::PingResponse { ok },
+                    )),
+                },
+            )),
+        });
+    }
+
     pub fn handle_log_message(&self, level: LogLevel, message: &str) {
         match level {
             LogLevel::Debug => debug!("{}", message),

@@ -370,6 +370,20 @@ impl WebView {
         }
     }
 
+    /// Trigger a request/response round trip over the internal IPC channel.
+    ///
+    /// Primarily a diagnostic: it proves the bidirectional channel that backs
+    /// the delegate features (script dialogs, file chooser, HTTP auth,
+    /// permission and context-menu prompts) is wired up. The runner emits a
+    /// request which this `WebView` answers automatically; both sides log the
+    /// correlation.
+    pub fn ping(&self) {
+        let imp = self.imp();
+        if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+            servo.ping();
+        }
+    }
+
     pub fn reload(&self) {
         let imp = self.imp();
         if let Some(servo) = imp.servo_runner.borrow().as_ref() {
@@ -490,6 +504,19 @@ impl WebView {
             servo_event::Event::ScriptMessage(script_message) => {
                 if let Some(ucm) = self.imp().user_content_manager.borrow().as_ref() {
                     ucm.emit_script_message(&script_message.name, &script_message.body);
+                }
+            }
+            servo_event::Event::PingRequest(ping_request) => {
+                // Round-trip test of the bidirectional IPC channel: immediately
+                // answer the runner's request with the same id. Real delegate
+                // features (dialogs, file chooser, ...) show UI here and reply
+                // when the user acts.
+                info!(
+                    "Received PingRequest id {}, replying",
+                    ping_request.request_id
+                );
+                if let Some(servo) = self.imp().servo_runner.borrow().as_ref() {
+                    servo.send_ping_response(ping_request.request_id, true);
                 }
             }
         }

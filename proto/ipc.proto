@@ -30,7 +30,35 @@ message ServoAction {
     SetZoomLevel set_zoom_level = 24;
     SetHidpiScaleFactor set_hidpi_scale_factor = 25;
     LoadHtml load_html = 26;
+    // A response from the embedder (UI) to a request the runner previously
+    // emitted as a ServoEvent carrying the same request_id. This is the return
+    // path of the bidirectional request/response channel used by delegate
+    // features (dialogs, file chooser, auth, permissions, ...).
+    ServoResponse response = 27;
+    // Initiate a request/response round trip for testing the channel end to
+    // end. The runner replies with a PingRequest event.
+    Ping ping = 28;
   }
+}
+
+// See ServoAction.ping.
+message Ping {
+}
+
+// The return path of the request/response channel. `request_id` correlates the
+// response with the request event the runner emitted; `payload` carries the
+// per-feature answer.
+message ServoResponse {
+  uint64 request_id = 1;
+  oneof payload {
+    PingResponse ping = 2;
+  }
+}
+
+// Answer to a PingRequest: `ok` is echoed straight back for the round-trip
+// test.
+message PingResponse {
+  bool ok = 1;
 }
 
 // Set the page zoom level, as a browser's Ctrl+/Ctrl- would: the page's
@@ -147,7 +175,16 @@ message ServoEvent {
     LoadEnd load_end = 6;
     LogMessage log_message = 7;
     ScriptMessage script_message = 8;
+    // A request from the runner to the embedder (UI) that expects a
+    // ServoResponse action carrying the same request_id. Used to drive native
+    // UI for delegate features. PingRequest exercises the channel for testing.
+    PingRequest ping_request = 9;
   }
+}
+
+// See ServoEvent.ping_request.
+message PingRequest {
+  uint64 request_id = 1;
 }
 
 message FrameReady {

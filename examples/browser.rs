@@ -177,6 +177,9 @@ fn main() -> glib::ExitCode {
 
         // Load initial URL
         web_view.load_url("https://example.com");
+
+        // Prove the bidirectional IPC channel is wired up (logs a round trip).
+        web_view.ping();
     });
 
     app.run()

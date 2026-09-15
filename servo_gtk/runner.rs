@@ -38,8 +38,8 @@ use std::thread;
 use url::Url;
 
 use crate::proto_ipc::{
-    CursorChanged, FrameReady, LoadEnd, LoadStart, LogLevel, LogMessage, ScriptMessage,
-    ServoAction, ServoEvent, TitleChanged, UrlChanged, servo_action, servo_event,
+    CursorChanged, FrameReady, LoadEnd, LoadStart, LogLevel, LogMessage, PingRequest,
+    ScriptMessage, ServoAction, ServoEvent, TitleChanged, UrlChanged, servo_action, servo_event,
 };
 
 /// Prefix used by the injected script-message shim when forwarding a page
@@ -451,6 +451,55 @@ fn html_to_data_url(html: &str) -> String {
     out
 }
 
+/// Correlates outstanding runner->UI requests with the responses that come
+/// back over IPC.
+///
+/// Delegate features (script dialogs, file chooser, HTTP auth, permission and
+/// context-menu prompts) cannot answer Servo synchronously from the UI process:
+/// the request object Servo hands the delegate is not `Send` and owns a channel
+/// back into the engine, so it must stay in the runner. Instead the runner
+/// stashes that object here under a freshly allocated `request_id`, emits a
+/// request event carrying the id, and — when the matching [`ServoResponse`]
+/// action arrives — takes the object back out and completes it.
+///
+/// `T` is the stored request object (for example a Servo `SimpleDialog`). The
+/// id allocator is monotonic and never reuses an id for the lifetime of the
+/// runner, so a late or duplicate response cannot complete an unrelated
+/// request.
+struct PendingRequests<T> {
+    next_id: u64,
+    pending: std::collections::HashMap<u64, T>,
+}
+
+impl<T> PendingRequests<T> {
+    fn new() -> Self {
+        Self {
+            next_id: 1,
+            pending: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Store `request` and return the id the UI must echo back to complete it.
+    fn insert(&mut self, request: T) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.pending.insert(id, request);
+        id
+    }
+
+    /// Remove and return the request previously stored under `id`, if any. A
+    /// response for an unknown or already-completed id yields `None`.
+    fn take(&mut self, id: u64) -> Option<T> {
+        self.pending.remove(&id)
+    }
+
+    /// Number of requests still awaiting a response.
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn len(&self) -> usize {
+        self.pending.len()
+    }
+}
+
 /// Clamp a requested page-zoom level to the range Servo accepts.
 ///
 /// Servo clamps internally as well, but clamping here keeps the value the
@@ -552,6 +601,10 @@ pub fn run() {
     // not provide natively (it only supports removal by individual handle).
     let mut user_scripts: Vec<Rc<UserScript>> = Vec::new();
     let mut user_style_sheets: Vec<Rc<UserStyleSheet>> = Vec::new();
+
+    // Outstanding round-trip test requests (Task 5 primitive). Real delegate
+    // features store their Servo request objects in analogous maps.
+    let mut pending_pings: PendingRequests<()> = PendingRequests::new();
 
     let receiver = spawn_stdin_channel();
 
@@ -814,6 +867,36 @@ pub fn run() {
                         webview.set_hidpi_scale_factor(Scale::new(scale));
                     }
                 }
+                servo_action::Action::Ping(_) => {
+                    // Round-trip test of the request/response channel: stash a
+                    // placeholder, emit a request event, and expect a matching
+                    // ServoResponse action back.
+                    let request_id = pending_pings.insert(());
+                    log::debug!("Ping: emitting PingRequest id {request_id}");
+                    let event = ServoEvent {
+                        event: Some(servo_event::Event::PingRequest(PingRequest { request_id })),
+                    };
+                    let _ = event_pipe.send(event);
+                }
+                servo_action::Action::Response(response) => {
+                    let request_id = response.request_id;
+                    match response.payload {
+                        Some(crate::proto_ipc::servo_response::Payload::Ping(ping)) => {
+                            match pending_pings.take(request_id) {
+                                Some(()) => log::info!(
+                                    "Ping round trip complete for id {request_id} (ok={})",
+                                    ping.ok
+                                ),
+                                None => log::warn!(
+                                    "Received ping response for unknown request id {request_id}"
+                                ),
+                            }
+                        }
+                        None => {
+                            log::warn!("Received response with no payload for id {request_id}");
+                        }
+                    }
+                }
             }
         }
 
@@ -961,5 +1044,43 @@ mod tests {
         assert!(url.contains("%C3%A9"));
         // Unreserved characters pass through.
         assert!(url.contains("href"));
+    }
+
+    #[test]
+    fn pending_requests_allocates_unique_monotonic_ids() {
+        let mut pending: PendingRequests<&str> = PendingRequests::new();
+        let a = pending.insert("a");
+        let b = pending.insert("b");
+        let c = pending.insert("c");
+        assert!(a < b && b < c, "ids must be strictly increasing");
+        assert_eq!(pending.len(), 3);
+    }
+
+    #[test]
+    fn pending_requests_take_returns_stored_value_once() {
+        let mut pending: PendingRequests<i32> = PendingRequests::new();
+        let id = pending.insert(42);
+        assert_eq!(pending.take(id), Some(42));
+        // A second take for the same id yields nothing (no double completion).
+        assert_eq!(pending.take(id), None);
+        assert_eq!(pending.len(), 0);
+    }
+
+    #[test]
+    fn pending_requests_take_unknown_id_is_none() {
+        let mut pending: PendingRequests<i32> = PendingRequests::new();
+        let id = pending.insert(1);
+        assert_eq!(pending.take(id + 999), None);
+        // The real request is untouched.
+        assert_eq!(pending.len(), 1);
+    }
+
+    #[test]
+    fn pending_requests_ids_not_reused_after_completion() {
+        let mut pending: PendingRequests<()> = PendingRequests::new();
+        let first = pending.insert(());
+        assert_eq!(pending.take(first), Some(()));
+        let second = pending.insert(());
+        assert_ne!(first, second, "a completed id must not be reused");
     }
 }
