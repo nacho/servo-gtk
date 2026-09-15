@@ -28,6 +28,7 @@ message ServoAction {
     UnregisterScriptMessageHandler unregister_script_message_handler = 22;
     EvaluateJavascript evaluate_javascript = 23;
     SetZoomLevel set_zoom_level = 24;
+    SetHidpiScaleFactor set_hidpi_scale_factor = 25;
   }
 }
 
@@ -36,6 +37,16 @@ message ServoAction {
 // output simply being magnified. The runner clamps the value to [0.1, 10.0].
 message SetZoomLevel {
   double level = 1;
+}
+
+// Set the HiDPI scale factor: device pixels per logical (device-independent)
+// pixel, e.g. 2.0 on a doubled display. The surface size in Resize is always in
+// device pixels; this tells the page how large a CSS pixel is so
+// window.devicePixelRatio, media queries and layout come out right instead of
+// the page being laid out at logical size and upscaled. Non-finite or
+// non-positive values are ignored by the runner.
+message SetHidpiScaleFactor {
+  float scale = 1;
 }
 
 message LoadUrl {
