@@ -27,7 +27,15 @@ message ServoAction {
     RegisterScriptMessageHandler register_script_message_handler = 21;
     UnregisterScriptMessageHandler unregister_script_message_handler = 22;
     EvaluateJavascript evaluate_javascript = 23;
+    SetZoomLevel set_zoom_level = 24;
   }
+}
+
+// Set the page zoom level, as a browser's Ctrl+/Ctrl- would: the page's
+// devicePixelRatio changes and the page re-lays out, rather than the rendered
+// output simply being magnified. The runner clamps the value to [0.1, 10.0].
+message SetZoomLevel {
+  double level = 1;
 }
 
 message LoadUrl {

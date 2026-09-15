@@ -431,6 +431,20 @@ fn convert_key_event(
     KeyboardEvent::new_without_event(state, key, code, location, modifiers, false, false)
 }
 
+/// Clamp a requested page-zoom level to the range Servo accepts.
+///
+/// Servo clamps internally as well, but clamping here keeps the value the
+/// runner acts on identical to the one the widget mirrors, and rejects
+/// non-finite requests (which would otherwise propagate as NaN).
+fn clamp_zoom_level(level: f64) -> f32 {
+    const MIN_ZOOM: f64 = 0.1;
+    const MAX_ZOOM: f64 = 10.0;
+    if !level.is_finite() {
+        return 1.0;
+    }
+    level.clamp(MIN_ZOOM, MAX_ZOOM) as f32
+}
+
 /// Queue `action` for processing, merging it into the previous one when the
 /// intermediate states carry no information.
 fn push_coalesced_input(pending: &mut Vec<servo_action::Action>, action: ServoAction) {
@@ -759,6 +773,11 @@ pub fn run() {
                     // the native side.
                     webview.evaluate_javascript(evaluate.source, |_result| {});
                 }
+                servo_action::Action::SetZoomLevel(set_zoom_level) => {
+                    let zoom = clamp_zoom_level(set_zoom_level.level);
+                    log::debug!("Setting page zoom to {zoom}");
+                    webview.set_page_zoom(zoom);
+                }
             }
         }
 
@@ -867,5 +886,21 @@ mod tests {
         // literal in the generated JS.
         let shim = script_message_handler_shim("a\"b");
         assert!(shim.contains(r#""a\"b""#));
+    }
+
+    #[test]
+    fn clamp_zoom_level_clamps_to_servo_range() {
+        assert_eq!(clamp_zoom_level(1.0), 1.0);
+        assert_eq!(clamp_zoom_level(0.05), 0.1);
+        assert_eq!(clamp_zoom_level(50.0), 10.0);
+        assert_eq!(clamp_zoom_level(0.1), 0.1);
+        assert_eq!(clamp_zoom_level(10.0), 10.0);
+    }
+
+    #[test]
+    fn clamp_zoom_level_rejects_non_finite() {
+        assert_eq!(clamp_zoom_level(f64::NAN), 1.0);
+        assert_eq!(clamp_zoom_level(f64::INFINITY), 1.0);
+        assert_eq!(clamp_zoom_level(f64::NEG_INFINITY), 1.0);
     }
 }

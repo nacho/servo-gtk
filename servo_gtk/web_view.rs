@@ -59,6 +59,14 @@ mod imp {
         /// Whether the view is currently loading a page.
         #[property(get, name = "is-loading")]
         pub is_loading: Cell<bool>,
+        /// The page zoom level, where 1.0 is unzoomed.
+        ///
+        /// Mirrored here rather than read back from the runner so the property
+        /// is readable and settable at any point, including before the runner
+        /// has applied it. The custom setter (see [`super::WebView::set_zoom_level`])
+        /// clamps and forwards the value to the runner.
+        #[property(get, set = Self::set_zoom_level, name = "zoom-level", minimum = 0.1, maximum = 10.0, default = 1.0)]
+        pub zoom_level: Cell<f64>,
     }
 
     #[glib::object_subclass]
@@ -66,6 +74,21 @@ mod imp {
         const NAME: &'static str = "WebView";
         type Type = super::WebView;
         type ParentType = gtk::Widget;
+    }
+
+    impl WebView {
+        /// Property setter for `zoom-level`.
+        ///
+        /// Clamps the requested level to the range Servo accepts, caches it so
+        /// the getter reflects it immediately, and forwards it to the runner.
+        /// The runner clamps again defensively.
+        fn set_zoom_level(&self, level: f64) {
+            let clamped = level.clamp(0.1, 10.0);
+            self.zoom_level.set(clamped);
+            if let Some(servo) = self.servo_runner.borrow().as_ref() {
+                servo.set_zoom_level(clamped);
+            }
+        }
     }
 
     #[glib::derived_properties]
@@ -84,6 +107,8 @@ mod imp {
 
         fn constructed(&self) {
             self.parent_constructed();
+
+            self.zoom_level.set(1.0);
 
             let servo_runner = ServoRunner::new();
             let event_receiver = servo_runner.event_receiver();
@@ -316,7 +341,8 @@ impl WebView {
     /// Note: the read-only `uri`, `title`, and `is-loading` properties each
     /// have a generated getter (`uri()`, `title()`, `is_loading()`) and a
     /// `notify::` signal (`connect_uri_notify`, `connect_title_notify`,
-    /// `connect_is_loading_notify`).
+    /// `connect_is_loading_notify`). The read-write `zoom-level` property has
+    /// `zoom_level()`/`set_zoom_level()` accessors and `connect_zoom_level_notify`.
     pub fn connect_load_changed<F: Fn(&Self, LoadEvent) + 'static>(
         &self,
         f: F,

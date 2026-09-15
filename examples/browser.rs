@@ -64,6 +64,15 @@ fn main() -> glib::ExitCode {
         let reload_button = gtk::Button::from_icon_name("view-refresh");
         reload_button.set_tooltip_text(Some("Reload"));
 
+        let zoom_out_button = gtk::Button::from_icon_name("zoom-out-symbolic");
+        zoom_out_button.set_tooltip_text(Some("Zoom out"));
+
+        let zoom_reset_button = gtk::Button::from_icon_name("zoom-original-symbolic");
+        zoom_reset_button.set_tooltip_text(Some("Reset zoom"));
+
+        let zoom_in_button = gtk::Button::from_icon_name("zoom-in-symbolic");
+        zoom_in_button.set_tooltip_text(Some("Zoom in"));
+
         let spinner = gtk::Spinner::new();
         spinner.set_tooltip_text(Some("Loading"));
 
@@ -90,6 +99,23 @@ fn main() -> glib::ExitCode {
         let web_view_clone = web_view.clone();
         forward_button.connect_clicked(move |_| {
             web_view_clone.go_forward();
+        });
+
+        // Page zoom: step by a multiplicative factor, or reset to 1.0. The
+        // `zoom-level` property is clamped to [0.1, 10.0] by the widget.
+        let web_view_clone = web_view.clone();
+        zoom_out_button.connect_clicked(move |_| {
+            web_view_clone.set_zoom_level(web_view_clone.zoom_level() / 1.2);
+        });
+
+        let web_view_clone = web_view.clone();
+        zoom_reset_button.connect_clicked(move |_| {
+            web_view_clone.set_zoom_level(1.0);
+        });
+
+        let web_view_clone = web_view.clone();
+        zoom_in_button.connect_clicked(move |_| {
+            web_view_clone.set_zoom_level(web_view_clone.zoom_level() * 1.2);
         });
 
         // Keep the URL entry in sync with the actual page URI via
@@ -121,6 +147,9 @@ fn main() -> glib::ExitCode {
         hbox.append(&forward_button);
         hbox.append(&reload_button);
         hbox.append(&url_entry);
+        hbox.append(&zoom_out_button);
+        hbox.append(&zoom_reset_button);
+        hbox.append(&zoom_in_button);
         hbox.append(&spinner);
         vbox.append(&hbox);
         vbox.append(&web_view);
