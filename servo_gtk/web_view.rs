@@ -357,6 +357,19 @@ impl WebView {
         }
     }
 
+    /// Load an HTML document from an in-memory string, analogous to
+    /// `webkit_web_view_load_html()`.
+    ///
+    /// `base_url` is accepted for API parity and future use; the current
+    /// implementation loads the HTML through a `data:` URL, so relative links
+    /// are resolved against that data URL rather than `base_url`.
+    pub fn load_html(&self, html: &str, base_url: Option<&str>) {
+        let imp = self.imp();
+        if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+            servo.load_html(html, base_url);
+        }
+    }
+
     pub fn reload(&self) {
         let imp = self.imp();
         if let Some(servo) = imp.servo_runner.borrow().as_ref() {

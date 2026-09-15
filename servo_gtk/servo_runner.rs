@@ -143,6 +143,15 @@ impl ServoRunner {
         });
     }
 
+    pub fn load_html(&self, html: &str, base_url: Option<&str>) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::LoadHtml(crate::proto_ipc::LoadHtml {
+                html: html.to_string(),
+                base_url: base_url.unwrap_or_default().to_string(),
+            })),
+        });
+    }
+
     pub fn reload(&self) {
         self.send_action(ServoAction {
             action: Some(servo_action::Action::Reload(true)),
