@@ -11,6 +11,7 @@
 //! process was spawned as a runner, control is handed off here and never
 //! returns to the normal application startup path.
 
+use std::cell::RefCell;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::BorrowedFd;
@@ -30,6 +31,7 @@ use servo::{
     DeviceIntRect, DeviceVector2D, InputEvent, KeyboardEvent, MouseButton, MouseButtonAction,
     MouseButtonEvent, MouseMoveEvent, Opts, Scroll, ServoBuilder,
 };
+use servo::{EmbedderControl, SimpleDialog};
 use servo::{RenderingContext, SoftwareRenderingContext, WebView, WebViewBuilder, WebViewDelegate};
 use std::str::FromStr;
 use std::sync::mpsc;
@@ -39,7 +41,8 @@ use url::Url;
 
 use crate::proto_ipc::{
     CursorChanged, FrameReady, LoadEnd, LoadStart, LogLevel, LogMessage, PingRequest,
-    ScriptMessage, ServoAction, ServoEvent, TitleChanged, UrlChanged, servo_action, servo_event,
+    ScriptDialogKind, ScriptDialogRequest, ScriptMessage, ServoAction, ServoEvent, TitleChanged,
+    UrlChanged, servo_action, servo_event,
 };
 
 /// Prefix used by the injected script-message shim when forwarding a page
@@ -180,13 +183,21 @@ impl EventPipe {
 struct ServoWebViewDelegate {
     rendering_context: Rc<dyn RenderingContext>,
     event_pipe: EventPipe,
+    /// Script dialogs (alert/confirm/prompt) awaiting a UI response, shared
+    /// with the runner loop which completes them when the response arrives.
+    pending_dialogs: Rc<RefCell<PendingRequests<SimpleDialog>>>,
 }
 
 impl ServoWebViewDelegate {
-    fn new(rendering_context: Rc<dyn RenderingContext>, event_pipe: EventPipe) -> Self {
+    fn new(
+        rendering_context: Rc<dyn RenderingContext>,
+        event_pipe: EventPipe,
+        pending_dialogs: Rc<RefCell<PendingRequests<SimpleDialog>>>,
+    ) -> Self {
         Self {
             rendering_context,
             event_pipe,
+            pending_dialogs,
         }
     }
 }
@@ -294,6 +305,51 @@ impl WebViewDelegate for ServoWebViewDelegate {
         // separate log-message plumbing handles normal logging).
         if let Some(event) = parse_script_message(&message) {
             let _ = self.event_pipe.send(event);
+        }
+    }
+
+    fn show_embedder_control(&self, _webview: WebView, embedder_control: EmbedderControl) {
+        match embedder_control {
+            EmbedderControl::SimpleDialog(dialog) => {
+                let (kind, message, default_value) = match &dialog {
+                    SimpleDialog::Alert(d) => (
+                        ScriptDialogKind::Alert,
+                        d.message().to_owned(),
+                        String::new(),
+                    ),
+                    SimpleDialog::Confirm(d) => (
+                        ScriptDialogKind::Confirm,
+                        d.message().to_owned(),
+                        String::new(),
+                    ),
+                    SimpleDialog::Prompt(d) => (
+                        ScriptDialogKind::Prompt,
+                        d.message().to_owned(),
+                        d.current_value().to_owned(),
+                    ),
+                };
+                // Stash the dialog and ask the UI to present it. The runner
+                // loop completes it when the ScriptDialogResponse arrives; if
+                // the UI never answers, dropping the dialog cancels it.
+                let request_id = self.pending_dialogs.borrow_mut().insert(dialog);
+                let event = ServoEvent {
+                    event: Some(servo_event::Event::ScriptDialogRequest(
+                        ScriptDialogRequest {
+                            request_id,
+                            kind: kind as i32,
+                            message,
+                            default_value,
+                        },
+                    )),
+                };
+                let _ = self.event_pipe.send(event);
+            }
+            // Other embedder controls (select, color picker, file picker,
+            // context menu, IME) are handled elsewhere or not yet supported;
+            // dropping them falls back to their default (cancelled) response.
+            _ => {
+                log::debug!("Unhandled embedder control; using default response");
+            }
         }
     }
 }
@@ -429,6 +485,33 @@ fn convert_key_event(
     let _code = key_code; // Keep for future use
     let code = Code::Unidentified;
     KeyboardEvent::new_without_event(state, key, code, location, modifiers, false, false)
+}
+
+/// Complete a pending [`SimpleDialog`] with the UI's answer.
+///
+/// For a confirmed prompt the entered value is written back before confirming;
+/// alert and confirm ignore the value. A non-confirmed answer dismisses the
+/// dialog (which for alert is equivalent to confirming, since alert has no
+/// cancel path).
+fn complete_script_dialog(dialog: SimpleDialog, answer: crate::proto_ipc::ScriptDialogResponse) {
+    match dialog {
+        SimpleDialog::Alert(alert) => alert.confirm(),
+        SimpleDialog::Confirm(confirm) => {
+            if answer.confirmed {
+                confirm.confirm();
+            } else {
+                confirm.dismiss();
+            }
+        }
+        SimpleDialog::Prompt(mut prompt) => {
+            if answer.confirmed {
+                prompt.set_current_value(&answer.value);
+                prompt.confirm();
+            } else {
+                prompt.dismiss();
+            }
+        }
+    }
 }
 
 /// Build a `data:text/html` URL from an HTML string by percent-encoding it.
@@ -586,9 +669,12 @@ pub fn run() {
     let user_content_manager = Rc::new(UserContentManager::new(&servo));
 
     let event_pipe = EventPipe::from_stdout();
+    let pending_dialogs: Rc<RefCell<PendingRequests<SimpleDialog>>> =
+        Rc::new(RefCell::new(PendingRequests::new()));
     let delegate = Rc::new(ServoWebViewDelegate::new(
         rendering_context.clone(),
         event_pipe.clone(),
+        pending_dialogs.clone(),
     ));
 
     let webview = WebViewBuilder::new(&servo, rendering_context)
@@ -889,6 +975,14 @@ pub fn run() {
                                 ),
                                 None => log::warn!(
                                     "Received ping response for unknown request id {request_id}"
+                                ),
+                            }
+                        }
+                        Some(crate::proto_ipc::servo_response::Payload::ScriptDialog(answer)) => {
+                            match pending_dialogs.borrow_mut().take(request_id) {
+                                Some(dialog) => complete_script_dialog(dialog, answer),
+                                None => log::warn!(
+                                    "Received dialog response for unknown request id {request_id}"
                                 ),
                             }
                         }

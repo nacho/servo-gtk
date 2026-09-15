@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use crate::key_tables::KeyTables;
-use crate::proto_ipc::{ServoEvent, servo_event};
+use crate::proto_ipc::{ScriptDialogKind, ScriptDialogRequest, ServoEvent, servo_event};
 use crate::servo_runner::{LogLevel, ServoRunner};
 use crate::user_content::UserContentManager;
 use glib::info;
@@ -441,6 +441,132 @@ impl WebView {
         Some((translated.x() as f64, translated.y() as f64))
     }
 
+    /// Present a script-initiated dialog (alert/confirm/prompt) and send the
+    /// user's answer back to the runner over the bidirectional IPC channel.
+    ///
+    /// Alert and confirm use `gtk::AlertDialog`; prompt uses a small modal
+    /// window with a text entry, since `AlertDialog` has no input field.
+    fn show_script_dialog(&self, request: ScriptDialogRequest) {
+        let kind = ScriptDialogKind::try_from(request.kind).unwrap_or(ScriptDialogKind::Alert);
+        let request_id = request.request_id;
+        let parent = gtk::prelude::WidgetExt::root(self).and_downcast::<gtk::Window>();
+
+        match kind {
+            ScriptDialogKind::Alert | ScriptDialogKind::Confirm => {
+                let is_confirm = matches!(kind, ScriptDialogKind::Confirm);
+                let dialog = gtk::AlertDialog::builder()
+                    .message(&request.message)
+                    .modal(true)
+                    .build();
+                if is_confirm {
+                    dialog.set_buttons(&["Cancel", "OK"]);
+                    dialog.set_cancel_button(0);
+                    dialog.set_default_button(1);
+                } else {
+                    dialog.set_buttons(&["OK"]);
+                    dialog.set_default_button(0);
+                }
+
+                let obj_weak = self.downgrade();
+                dialog.choose(parent.as_ref(), gio::Cancellable::NONE, move |result| {
+                    // For alert the only button (index 0) is a confirm. For
+                    // confirm, index 1 is OK; anything else (Cancel, Escape,
+                    // error) is a dismissal.
+                    let confirmed = if is_confirm {
+                        matches!(result, Ok(1))
+                    } else {
+                        true
+                    };
+                    if let Some(obj) = obj_weak.upgrade()
+                        && let Some(servo) = obj.imp().servo_runner.borrow().as_ref()
+                    {
+                        servo.send_script_dialog_response(request_id, confirmed, "");
+                    }
+                });
+            }
+            ScriptDialogKind::Prompt => {
+                self.show_prompt_dialog(request_id, &request.message, &request.default_value);
+            }
+        }
+    }
+
+    /// Present a `prompt()` dialog: a modal window with a message, a text entry
+    /// pre-filled with `default_value`, and Cancel/OK buttons.
+    fn show_prompt_dialog(&self, request_id: u64, message: &str, default_value: &str) {
+        let parent = gtk::prelude::WidgetExt::root(self).and_downcast::<gtk::Window>();
+        let window = gtk::Window::builder()
+            .title("")
+            .modal(true)
+            .resizable(false)
+            .build();
+        if let Some(parent) = parent.as_ref() {
+            window.set_transient_for(Some(parent));
+        }
+
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        content.set_margin_top(12);
+        content.set_margin_bottom(12);
+        content.set_margin_start(12);
+        content.set_margin_end(12);
+
+        let label = gtk::Label::new(Some(message));
+        label.set_wrap(true);
+        label.set_xalign(0.0);
+        content.append(&label);
+
+        let entry = gtk::Entry::new();
+        entry.set_text(default_value);
+        entry.set_activates_default(true);
+        content.append(&entry);
+
+        let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        buttons.set_halign(gtk::Align::End);
+        let cancel_button = gtk::Button::with_label("Cancel");
+        let ok_button = gtk::Button::with_label("OK");
+        ok_button.add_css_class("suggested-action");
+        buttons.append(&cancel_button);
+        buttons.append(&ok_button);
+        content.append(&buttons);
+
+        window.set_child(Some(&content));
+
+        // A single-fire responder shared by both buttons and the close request,
+        // so exactly one response is ever sent for a given dialog.
+        let responded = Rc::new(Cell::new(false));
+        let respond = {
+            let obj_weak = self.downgrade();
+            let window = window.clone();
+            let responded = responded.clone();
+            move |confirmed: bool, value: String| {
+                if responded.replace(true) {
+                    return;
+                }
+                if let Some(obj) = obj_weak.upgrade()
+                    && let Some(servo) = obj.imp().servo_runner.borrow().as_ref()
+                {
+                    servo.send_script_dialog_response(request_id, confirmed, &value);
+                }
+                window.close();
+            }
+        };
+
+        let respond_cancel = respond.clone();
+        cancel_button.connect_clicked(move |_| respond_cancel(false, String::new()));
+
+        let entry_clone = entry.clone();
+        let respond_ok = respond.clone();
+        ok_button.connect_clicked(move |_| respond_ok(true, entry_clone.text().to_string()));
+
+        // Closing the window (Escape / title bar) counts as a cancel.
+        let respond_close = respond;
+        window.connect_close_request(move |_| {
+            respond_close(false, String::new());
+            glib::Propagation::Proceed
+        });
+
+        window.present();
+    }
+
     fn process_servo_event(&self, event: ServoEvent) {
         let Some(event_type) = event.event else {
             return;
@@ -518,6 +644,9 @@ impl WebView {
                 if let Some(servo) = self.imp().servo_runner.borrow().as_ref() {
                     servo.send_ping_response(ping_request.request_id, true);
                 }
+            }
+            servo_event::Event::ScriptDialogRequest(request) => {
+                self.show_script_dialog(request);
             }
         }
     }

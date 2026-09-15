@@ -121,7 +121,8 @@ fn main() -> glib::ExitCode {
             web_view_clone.set_zoom_level(web_view_clone.zoom_level() * 1.2);
         });
 
-        // Demonstrate loading an in-memory HTML document.
+        // Demonstrate loading an in-memory HTML document that also exercises
+        // the script dialogs (alert/confirm/prompt).
         let web_view_clone = web_view.clone();
         html_button.connect_clicked(move |_| {
             web_view_clone.load_html(
@@ -130,7 +131,16 @@ fn main() -> glib::ExitCode {
                  <body style=\"font-family: sans-serif; padding: 2rem;\">\
                  <h1>Hello from load_html()</h1>\
                  <p>This document was loaded from an in-memory string, \
-                 not fetched over the network.</p></body></html>",
+                 not fetched over the network.</p>\
+                 <p>\
+                 <button onclick=\"alert('This is an alert dialog.')\">alert()</button>\
+                 <button onclick=\"document.getElementById('o').textContent = \
+                 confirm('Do you confirm?')\">confirm()</button>\
+                 <button onclick=\"document.getElementById('o').textContent = \
+                 prompt('Type something:', 'default text')\">prompt()</button>\
+                 </p>\
+                 <p>Result: <span id=\"o\"></span></p>\
+                 </body></html>",
                 None,
             );
         });

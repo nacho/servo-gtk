@@ -418,6 +418,25 @@ impl ServoRunner {
         });
     }
 
+    /// Answer a script dialog request (alert/confirm/prompt) identified by
+    /// `request_id`. `confirmed` is whether the user accepted; `value` is the
+    /// prompt text (ignored for alert/confirm).
+    pub fn send_script_dialog_response(&self, request_id: u64, confirmed: bool, value: &str) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::Response(
+                crate::proto_ipc::ServoResponse {
+                    request_id,
+                    payload: Some(crate::proto_ipc::servo_response::Payload::ScriptDialog(
+                        crate::proto_ipc::ScriptDialogResponse {
+                            confirmed,
+                            value: value.to_string(),
+                        },
+                    )),
+                },
+            )),
+        });
+    }
+
     pub fn handle_log_message(&self, level: LogLevel, message: &str) {
         match level {
             LogLevel::Debug => debug!("{}", message),
