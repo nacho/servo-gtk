@@ -522,39 +522,34 @@ impl WebView {
     /// Present a script-initiated dialog (alert/confirm/prompt) and send the
     /// user's answer back to the runner over the bidirectional IPC channel.
     ///
-    /// Alert and confirm use `gtk::AlertDialog`; prompt uses a small modal
-    /// window with a text entry, since `AlertDialog` has no input field.
+    /// Confirm uses `gtk::AlertDialog`; alert and prompt use a small modal
+    /// window (alert has a single OK button, prompt adds a text entry). A
+    /// single-button `AlertDialog` does not reliably resolve its `choose`
+    /// callback across GTK versions, which left `alert()` hanging, so alert
+    /// uses the same window mechanism as prompt.
     fn show_script_dialog(&self, request: ScriptDialogRequest) {
         let kind = ScriptDialogKind::try_from(request.kind).unwrap_or(ScriptDialogKind::Alert);
         let request_id = request.request_id;
         let parent = gtk::prelude::WidgetExt::root(self).and_downcast::<gtk::Window>();
 
         match kind {
-            ScriptDialogKind::Alert | ScriptDialogKind::Confirm => {
-                let is_confirm = matches!(kind, ScriptDialogKind::Confirm);
+            ScriptDialogKind::Alert => {
+                self.show_alert_dialog(request_id, &request.message);
+            }
+            ScriptDialogKind::Confirm => {
                 let dialog = gtk::AlertDialog::builder()
                     .message(&request.message)
                     .modal(true)
                     .build();
-                if is_confirm {
-                    dialog.set_buttons(&["Cancel", "OK"]);
-                    dialog.set_cancel_button(0);
-                    dialog.set_default_button(1);
-                } else {
-                    dialog.set_buttons(&["OK"]);
-                    dialog.set_default_button(0);
-                }
+                dialog.set_buttons(&["Cancel", "OK"]);
+                dialog.set_cancel_button(0);
+                dialog.set_default_button(1);
 
                 let obj_weak = self.downgrade();
                 dialog.choose(parent.as_ref(), gio::Cancellable::NONE, move |result| {
-                    // For alert the only button (index 0) is a confirm. For
-                    // confirm, index 1 is OK; anything else (Cancel, Escape,
-                    // error) is a dismissal.
-                    let confirmed = if is_confirm {
-                        matches!(result, Ok(1))
-                    } else {
-                        true
-                    };
+                    // OK is index 1; anything else (Cancel, Escape, error) is a
+                    // dismissal.
+                    let confirmed = matches!(result, Ok(1));
                     if let Some(obj) = obj_weak.upgrade()
                         && let Some(servo) = obj.imp().servo_runner.borrow().as_ref()
                     {
@@ -566,6 +561,71 @@ impl WebView {
                 self.show_prompt_dialog(request_id, &request.message, &request.default_value);
             }
         }
+    }
+
+    /// Present an `alert()` dialog: a modal window with the message and a
+    /// single OK button. Dismissing it (OK, Escape, or closing) always sends a
+    /// confirmation, matching `alert()`'s semantics.
+    fn show_alert_dialog(&self, request_id: u64, message: &str) {
+        let parent = gtk::prelude::WidgetExt::root(self).and_downcast::<gtk::Window>();
+        let window = gtk::Window::builder()
+            .title("")
+            .modal(true)
+            .resizable(false)
+            .build();
+        if let Some(parent) = parent.as_ref() {
+            window.set_transient_for(Some(parent));
+        }
+
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        content.set_margin_top(12);
+        content.set_margin_bottom(12);
+        content.set_margin_start(12);
+        content.set_margin_end(12);
+
+        let label = gtk::Label::new(Some(message));
+        label.set_wrap(true);
+        label.set_xalign(0.0);
+        content.append(&label);
+
+        let ok_button = gtk::Button::with_label("OK");
+        ok_button.add_css_class("suggested-action");
+        ok_button.set_halign(gtk::Align::End);
+        content.append(&ok_button);
+
+        window.set_child(Some(&content));
+
+        // A single-fire responder shared by the button and the close request,
+        // so exactly one response is ever sent. alert() has no cancel path, so
+        // any dismissal confirms.
+        let responded = Rc::new(Cell::new(false));
+        let respond = {
+            let obj_weak = self.downgrade();
+            let window = window.clone();
+            let responded = responded.clone();
+            move || {
+                if responded.replace(true) {
+                    return;
+                }
+                if let Some(obj) = obj_weak.upgrade()
+                    && let Some(servo) = obj.imp().servo_runner.borrow().as_ref()
+                {
+                    servo.send_script_dialog_response(request_id, true, "");
+                }
+                window.close();
+            }
+        };
+
+        let respond_ok = respond.clone();
+        ok_button.connect_clicked(move |_| respond_ok());
+
+        let respond_close = respond;
+        window.connect_close_request(move |_| {
+            respond_close();
+            glib::Propagation::Proceed
+        });
+
+        window.present();
     }
 
     /// Present a `prompt()` dialog: a modal window with a message, a text entry

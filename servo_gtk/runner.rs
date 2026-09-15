@@ -1163,7 +1163,8 @@ pub fn run() {
                     let request_id = response.request_id;
                     match response.payload {
                         Some(crate::proto_ipc::servo_response::Payload::Ping(ping)) => {
-                            match pending_pings.take(request_id) {
+                            let taken = pending_pings.take(request_id);
+                            match taken {
                                 Some(()) => log::info!(
                                     "Ping round trip complete for id {request_id} (ok={})",
                                     ping.ok
@@ -1174,7 +1175,13 @@ pub fn run() {
                             }
                         }
                         Some(crate::proto_ipc::servo_response::Payload::ScriptDialog(answer)) => {
-                            match pending_state.dialogs.borrow_mut().take(request_id) {
+                            // Take the request out (releasing the RefCell borrow)
+                            // before completing it: completing drops the Servo
+                            // request object, which sends the response and can
+                            // re-enter the delegate, so the borrow must not be
+                            // held across it.
+                            let dialog = pending_state.dialogs.borrow_mut().take(request_id);
+                            match dialog {
                                 Some(dialog) => complete_script_dialog(dialog, answer),
                                 None => log::warn!(
                                     "Received dialog response for unknown request id {request_id}"
@@ -1182,7 +1189,8 @@ pub fn run() {
                             }
                         }
                         Some(crate::proto_ipc::servo_response::Payload::FileChooser(answer)) => {
-                            match pending_state.file_pickers.borrow_mut().take(request_id) {
+                            let picker = pending_state.file_pickers.borrow_mut().take(request_id);
+                            match picker {
                                 Some(picker) => complete_file_picker(picker, answer),
                                 None => log::warn!(
                                     "Received file chooser response for unknown request id {request_id}"
@@ -1190,7 +1198,8 @@ pub fn run() {
                             }
                         }
                         Some(crate::proto_ipc::servo_response::Payload::Auth(answer)) => {
-                            match pending_state.auth.borrow_mut().take(request_id) {
+                            let auth = pending_state.auth.borrow_mut().take(request_id);
+                            match auth {
                                 Some(auth) => {
                                     if answer.confirmed {
                                         auth.authenticate(answer.username, answer.password);
@@ -1203,7 +1212,9 @@ pub fn run() {
                             }
                         }
                         Some(crate::proto_ipc::servo_response::Payload::Permission(answer)) => {
-                            match pending_state.permissions.borrow_mut().take(request_id) {
+                            let permission =
+                                pending_state.permissions.borrow_mut().take(request_id);
+                            match permission {
                                 Some(permission) => {
                                     if answer.allow {
                                         permission.allow();
@@ -1217,7 +1228,8 @@ pub fn run() {
                             }
                         }
                         Some(crate::proto_ipc::servo_response::Payload::ContextMenu(answer)) => {
-                            match pending_state.context_menus.borrow_mut().take(request_id) {
+                            let menu = pending_state.context_menus.borrow_mut().take(request_id);
+                            match menu {
                                 Some(menu) => complete_context_menu(menu, answer),
                                 None => log::warn!(
                                     "Received context menu response for unknown request id {request_id}"
