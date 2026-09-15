@@ -25,12 +25,12 @@ const G_LOG_DOMAIN: &str = "ServoGtk";
 /// Convert a logical widget coordinate or delta to the device pixels Servo
 /// renders and receives input in.
 ///
-/// GTK reports a `scale-factor` of 1 on a standard display and 2 on a doubled
-/// HiDPI display. Servo's surface is sized in device pixels, so pointer and
-/// scroll values measured in logical units must be multiplied by the same
-/// factor. A non-positive scale factor is treated as 1.
-fn logical_to_device(value: f64, scale_factor: i32) -> f64 {
-    value * scale_factor.max(1) as f64
+/// The scale is the display's *fractional* device-pixel ratio (e.g. 1.25),
+/// read from the widget's `GdkSurface`. Servo's surface is sized in device
+/// pixels, so pointer and scroll values measured in logical units must be
+/// multiplied by the same factor. A non-positive scale is treated as 1.0.
+fn logical_to_device(value: f64, scale: f64) -> f64 {
+    value * if scale > 0.0 { scale } else { 1.0 }
 }
 
 /// The state of a page load, delivered by the [`WebView::connect_load_changed`]
@@ -154,7 +154,7 @@ mod imp {
                 if let Some(obj) = obj_weak.upgrade() {
                     let imp = obj.imp();
                     if let Some(servo) = imp.servo_runner.borrow().as_ref() {
-                        let scale = obj.scale_factor();
+                        let scale = obj.device_scale();
                         servo.motion(logical_to_device(x, scale), logical_to_device(y, scale));
                     }
                 }
@@ -169,7 +169,7 @@ mod imp {
                     if let Some(servo) = imp.servo_runner.borrow().as_ref()
                         && let Some((x, y)) = obj.translate_event_coordinates(event)
                     {
-                        let scale = obj.scale_factor();
+                        let scale = obj.device_scale();
                         let x = logical_to_device(x, scale);
                         let y = logical_to_device(y, scale);
                         match event.event_type() {
@@ -243,7 +243,7 @@ mod imp {
                 if let Some(obj) = obj_weak.upgrade() {
                     let imp = obj.imp();
                     if let Some(servo) = imp.servo_runner.borrow().as_ref() {
-                        let scale = obj.scale_factor();
+                        let scale = obj.device_scale();
                         servo.scroll(
                             logical_to_device(delta_x, scale),
                             logical_to_device(delta_y, scale),
@@ -258,14 +258,39 @@ mod imp {
             // its logical size is unchanged so `size_allocate` does not fire.
             // Re-sync the Servo surface so it renders at the new device
             // resolution and the page sees the right devicePixelRatio.
-            self.obj().connect_scale_factor_notify(move |obj| {
+            //
+            // A fractional scale change (e.g. 1.0 -> 1.25) does not change the
+            // integer scale-factor, so we watch the widget's scale-factor
+            // *and*, once realized, the GdkSurface's fractional `scale`.
+            fn resync_surface(obj: &super::WebView) {
                 let imp = obj.imp();
                 if let Some(servo) = imp.servo_runner.borrow().as_ref() {
-                    let scale = obj.scale_factor().max(1);
-                    let width = gtk::prelude::WidgetExt::width(obj) as u32 * scale as u32;
-                    let height = gtk::prelude::WidgetExt::height(obj) as u32 * scale as u32;
+                    let scale = obj.device_scale();
+                    let width = gtk::prelude::WidgetExt::width(obj) as f64;
+                    let height = gtk::prelude::WidgetExt::height(obj) as f64;
                     servo.set_hidpi_scale_factor(scale as f32);
-                    servo.resize(width, height);
+                    servo.resize(
+                        (width * scale).round() as u32,
+                        (height * scale).round() as u32,
+                    );
+                }
+            }
+
+            self.obj().connect_scale_factor_notify(resync_surface);
+
+            // Watch the fractional surface scale once the widget is realized.
+            self.obj().connect_realize(|obj| {
+                if let Some(native) = gtk::prelude::WidgetExt::native(obj)
+                    && let Some(surface) = native.surface()
+                {
+                    let obj_weak = obj.downgrade();
+                    surface.connect_scale_notify(move |_| {
+                        if let Some(obj) = obj_weak.upgrade() {
+                            resync_surface(&obj);
+                        }
+                    });
+                    // Apply the true fractional scale now that it is known.
+                    resync_surface(obj);
                 }
             });
 
@@ -296,14 +321,17 @@ mod imp {
         fn size_allocate(&self, width: i32, height: i32, _baseline: i32) {
             if let Some(servo) = self.servo_runner.borrow().as_ref() {
                 // Servo's surface is sized in device pixels. Multiply the
-                // logical allocation by the widget's scale factor and hand that
-                // same factor to Servo as the HiDPI scale, so the page is laid
-                // out at the right size rather than upscaled from logical size.
-                let scale = self.obj().scale_factor().max(1);
+                // logical allocation by the display's fractional scale and hand
+                // that same factor to Servo as the HiDPI scale, so the page is
+                // laid out at the right size rather than upscaled from logical
+                // size. Using the fractional scale (e.g. 1.25) rather than the
+                // integer scale-factor (which rounds 1.25 up to 2) keeps the
+                // page from rendering too large on fractionally scaled displays.
+                let scale = self.obj().device_scale();
                 servo.set_hidpi_scale_factor(scale as f32);
                 servo.resize(
-                    (width.max(0) as u32) * scale as u32,
-                    (height.max(0) as u32) * scale as u32,
+                    ((width.max(0) as f64) * scale).round() as u32,
+                    ((height.max(0) as f64) * scale).round() as u32,
                 );
             }
         }
@@ -455,6 +483,25 @@ impl WebView {
                 f(obj, &url);
             }),
         )
+    }
+
+    /// The display's fractional device-pixel ratio for this widget.
+    ///
+    /// GTK's integer `scale_factor()` rounds a fractional display scale (e.g.
+    /// 1.25) up to the next integer (2), which would make Servo render far too
+    /// large. The widget's `GdkSurface` exposes the true fractional scale via
+    /// `scale()`; use it when the widget is realized, falling back to the
+    /// integer factor (then 1.0) before a surface exists.
+    fn device_scale(&self) -> f64 {
+        if let Some(native) = gtk::prelude::WidgetExt::native(self)
+            && let Some(surface) = native.surface()
+        {
+            let scale = surface.scale();
+            if scale > 0.0 {
+                return scale;
+            }
+        }
+        (self.scale_factor().max(1)) as f64
     }
 
     fn translate_event_coordinates(&self, event: &gdk::Event) -> Option<(f64, f64)> {
@@ -986,14 +1033,15 @@ mod tests {
 
     #[test]
     fn logical_to_device_scales_by_factor() {
-        assert_eq!(logical_to_device(100.0, 1), 100.0);
-        assert_eq!(logical_to_device(100.0, 2), 200.0);
-        assert_eq!(logical_to_device(50.5, 2), 101.0);
+        assert_eq!(logical_to_device(100.0, 1.0), 100.0);
+        assert_eq!(logical_to_device(100.0, 2.0), 200.0);
+        assert_eq!(logical_to_device(100.0, 1.25), 125.0);
+        assert_eq!(logical_to_device(80.0, 1.5), 120.0);
     }
 
     #[test]
     fn logical_to_device_treats_non_positive_scale_as_one() {
-        assert_eq!(logical_to_device(100.0, 0), 100.0);
-        assert_eq!(logical_to_device(100.0, -1), 100.0);
+        assert_eq!(logical_to_device(100.0, 0.0), 100.0);
+        assert_eq!(logical_to_device(100.0, -1.0), 100.0);
     }
 }

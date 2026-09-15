@@ -18,7 +18,7 @@ path = "examples/user_content.rs"
 [dependencies]
 gio = "0.22"
 glib = { version = "0.22", features = ["v2_74", "log_macros"] }
-gtk = { package="gtk4", version="0.11", features=["v4_10"] }
+gtk = { package="gtk4", version="0.11", features=["v4_12"] }
 servo = { git = "https://github.com/servo/servo.git", rev = "1d44e5dd6a8b64c02f9dbf7fcbdf4ebdd0740019" }
 servo-embedder-traits = { git = "https://github.com/servo/servo.git", rev = "1d44e5dd6a8b64c02f9dbf7fcbdf4ebdd0740019" }
 surfman = { version = "0.9", features = ["chains", "sm-angle", "sm-angle-default"] }

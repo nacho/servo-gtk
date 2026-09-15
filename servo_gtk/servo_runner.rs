@@ -5,7 +5,7 @@
 use crate::key_tables::KeyLocation;
 use async_channel;
 use gio::prelude::*;
-use gio::{OutputStream, Subprocess, SubprocessFlags, SubprocessLauncher};
+use gio::{Subprocess, SubprocessFlags, SubprocessLauncher};
 use glib::{debug, error, info, warn};
 use prost::Message;
 use std::ffi::OsStr;
@@ -35,7 +35,7 @@ impl From<i32> for LogLevel {
 }
 
 pub struct ServoRunner {
-    stdin: OutputStream,
+    frame_sender: async_channel::Sender<Vec<u8>>,
     event_receiver: async_channel::Receiver<ServoEvent>,
     _subprocess: Subprocess,
 }
@@ -63,6 +63,28 @@ impl ServoRunner {
         let stdout = subprocess.stdout_pipe().expect("Failed to get stdout");
 
         let (event_sender, event_receiver) = async_channel::unbounded();
+
+        // Single writer task: frames are drained from this channel and written
+        // to the subprocess stdin one at a time, in order. Spawning a separate
+        // write future per action (as before) let concurrent writes interleave
+        // and corrupt the length-prefixed frame stream, which could silently
+        // drop actions such as resize.
+        let (frame_sender, frame_receiver) = async_channel::unbounded::<Vec<u8>>();
+        glib::spawn_future_local(glib::clone!(
+            #[strong]
+            stdin,
+            async move {
+                while let Ok(framed) = frame_receiver.recv().await {
+                    if stdin
+                        .write_all_future(framed, glib::Priority::DEFAULT)
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        ));
 
         // Async task to receive events from process
         glib::spawn_future_local(glib::clone!(
@@ -104,30 +126,26 @@ impl ServoRunner {
         ));
 
         Self {
-            stdin,
+            frame_sender,
             event_receiver,
             _subprocess: subprocess,
         }
     }
 
     fn send_action(&self, action: ServoAction) {
-        let stdin = self.stdin.clone();
-
-        // Write a message as a one shot, so that futures do not
-        // get accidentally interleaved, corrupting the message
-        // sequence.
+        // Encode into a length-prefixed frame and hand it to the single writer
+        // task, which writes frames sequentially. Ordering is preserved and
+        // frames never interleave.
         let len = action.encoded_len();
         let mut framed = Vec::with_capacity(4 + len);
-
         framed.extend_from_slice(&(len as u32).to_le_bytes());
         action
             .encode(&mut framed)
             .expect("encoding into a Vec cannot fail");
 
+        let sender = self.frame_sender.clone();
         glib::spawn_future_local(async move {
-            let _ = stdin
-                .write_all_future(framed, glib::Priority::DEFAULT)
-                .await;
+            let _ = sender.send(framed).await;
         });
     }
 
