@@ -452,6 +452,46 @@ impl ServoRunner {
         });
     }
 
+    /// Answer an HTTP authentication request identified by `request_id`. When
+    /// `confirmed` is false the challenge is cancelled and the credentials are
+    /// ignored.
+    pub fn send_auth_response(
+        &self,
+        request_id: u64,
+        confirmed: bool,
+        username: &str,
+        password: &str,
+    ) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::Response(
+                crate::proto_ipc::ServoResponse {
+                    request_id,
+                    payload: Some(crate::proto_ipc::servo_response::Payload::Auth(
+                        crate::proto_ipc::AuthResponse {
+                            confirmed,
+                            username: username.to_string(),
+                            password: password.to_string(),
+                        },
+                    )),
+                },
+            )),
+        });
+    }
+
+    /// Answer a permission request identified by `request_id`.
+    pub fn send_permission_response(&self, request_id: u64, allow: bool) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::Response(
+                crate::proto_ipc::ServoResponse {
+                    request_id,
+                    payload: Some(crate::proto_ipc::servo_response::Payload::Permission(
+                        crate::proto_ipc::PermissionResponse { allow },
+                    )),
+                },
+            )),
+        });
+    }
+
     pub fn handle_log_message(&self, level: LogLevel, message: &str) {
         match level {
             LogLevel::Debug => debug!("{}", message),
