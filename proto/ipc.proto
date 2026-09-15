@@ -223,6 +223,10 @@ message ServoEvent {
     // prompt allow/deny and reply with a ServoResponse carrying a
     // PermissionResponse.
     PermissionRequest permission_request = 13;
+    // Page content requested a new top-level WebView (window.open /
+    // target=_blank). The UI should open a new window hosting a fresh WebView
+    // for `url`. No response is expected.
+    CreateWebView create_web_view = 14;
   }
 }
 
@@ -269,6 +273,13 @@ message AuthRequest {
 message PermissionRequest {
   uint64 request_id = 1;
   string feature_name = 2;
+}
+
+// Page content asked to open a new top-level WebView (window.open /
+// target=_blank). `url` is the resolved destination. This is a one-way
+// notification: the UI opens a new window with its own WebView.
+message CreateWebView {
+  string url = 1;
 }
 
 message FrameReady {
