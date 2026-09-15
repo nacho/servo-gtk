@@ -936,7 +936,11 @@ pub fn run() {
                 }
                 servo_action::Action::Resize(resize) => {
                     log::debug!("Resizing to {}x{}", resize.width, resize.height);
-                    webview.resize(PhysicalSize::new(resize.width, resize.height));
+                    // `WebView::resize` resizes the rendering context and
+                    // updates the compositor document view itself (it calls
+                    // resize_rendering_context internally), so we must not
+                    // resize the context out of band here or the two desync.
+                    webview.resize(PhysicalSize::new(resize.width.max(1), resize.height.max(1)));
                 }
                 servo_action::Action::Motion(motion) => {
                     log::debug!("Mouse motion: ({}, {})", motion.x, motion.y);
