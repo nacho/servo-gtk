@@ -19,7 +19,7 @@ use std::rc::Rc;
 
 use core::time::Duration;
 use dpi::PhysicalSize;
-use embedder_traits::{WebViewPoint, WebViewVector};
+use embedder_traits::{ContextMenuItem, WebViewPoint, WebViewVector};
 use euclid::{Point2D, Scale};
 use keyboard_types::{Code, Key, KeyState, Location, Modifiers, NamedKey};
 use prost::Message;
@@ -30,11 +30,11 @@ use servo::{
     AuthenticationRequest, CreateNewWebViewRequest, PermissionRequest as ServoPermissionRequest,
 };
 use servo::{ConsoleLogLevel, UserContentManager, UserScript};
+use servo::{ContextMenu, EmbedderControl, FilePicker, SimpleDialog};
 use servo::{
     DeviceIntRect, DeviceVector2D, InputEvent, KeyboardEvent, MouseButton, MouseButtonAction,
     MouseButtonEvent, MouseMoveEvent, Opts, Scroll, ServoBuilder,
 };
-use servo::{EmbedderControl, FilePicker, SimpleDialog};
 use servo::{RenderingContext, SoftwareRenderingContext, WebView, WebViewBuilder, WebViewDelegate};
 use std::str::FromStr;
 use std::sync::mpsc;
@@ -195,6 +195,8 @@ struct ServoWebViewDelegate {
     pending_auth: Rc<RefCell<PendingRequests<AuthenticationRequest>>>,
     /// Permission prompts awaiting an allow/deny decision from the UI.
     pending_permissions: Rc<RefCell<PendingRequests<ServoPermissionRequest>>>,
+    /// Context menus awaiting a selection from the UI.
+    pending_context_menus: Rc<RefCell<PendingRequests<ContextMenu>>>,
     /// Auxiliary WebViews created for popups (window.open / target=_blank).
     ///
     /// Servo destroys a newly created WebView immediately unless the embedder
@@ -213,23 +215,33 @@ struct PopupState {
     aux: RefCell<Vec<WebView>>,
 }
 
+/// The set of pending request maps the delegate stashes not-yet-answered Servo
+/// requests into, shared with the runner loop that completes them. Bundled so
+/// the delegate constructor takes a single argument rather than one per map.
+#[derive(Default)]
+struct PendingState {
+    dialogs: Rc<RefCell<PendingRequests<SimpleDialog>>>,
+    file_pickers: Rc<RefCell<PendingRequests<FilePicker>>>,
+    auth: Rc<RefCell<PendingRequests<AuthenticationRequest>>>,
+    permissions: Rc<RefCell<PendingRequests<ServoPermissionRequest>>>,
+    context_menus: Rc<RefCell<PendingRequests<ContextMenu>>>,
+}
+
 impl ServoWebViewDelegate {
     fn new(
         rendering_context: Rc<dyn RenderingContext>,
         event_pipe: EventPipe,
-        pending_dialogs: Rc<RefCell<PendingRequests<SimpleDialog>>>,
-        pending_file_pickers: Rc<RefCell<PendingRequests<FilePicker>>>,
-        pending_auth: Rc<RefCell<PendingRequests<AuthenticationRequest>>>,
-        pending_permissions: Rc<RefCell<PendingRequests<ServoPermissionRequest>>>,
+        pending: &PendingState,
         popups: Rc<PopupState>,
     ) -> Self {
         Self {
             rendering_context,
             event_pipe,
-            pending_dialogs,
-            pending_file_pickers,
-            pending_auth,
-            pending_permissions,
+            pending_dialogs: pending.dialogs.clone(),
+            pending_file_pickers: pending.file_pickers.clone(),
+            pending_auth: pending.auth.clone(),
+            pending_permissions: pending.permissions.clone(),
+            pending_context_menus: pending.context_menus.clone(),
             popups,
         }
     }
@@ -444,9 +456,41 @@ impl WebViewDelegate for ServoWebViewDelegate {
                 };
                 let _ = self.event_pipe.send(event);
             }
-            // Other embedder controls (select, color picker, context menu, IME)
-            // are handled elsewhere or not yet supported; dropping them falls
-            // back to their default (cancelled) response.
+            EmbedderControl::ContextMenu(context_menu) => {
+                let position = context_menu.position();
+                let items = context_menu
+                    .items()
+                    .iter()
+                    .map(|item| match item {
+                        ContextMenuItem::Item { label, enabled, .. } => {
+                            crate::proto_ipc::ContextMenuEntry {
+                                label: label.clone(),
+                                enabled: *enabled,
+                                separator: false,
+                            }
+                        }
+                        ContextMenuItem::Separator => crate::proto_ipc::ContextMenuEntry {
+                            label: String::new(),
+                            enabled: false,
+                            separator: true,
+                        },
+                    })
+                    .collect();
+                let request_id = self.pending_context_menus.borrow_mut().insert(context_menu);
+                let event = ServoEvent {
+                    event: Some(servo_event::Event::ContextMenuRequest(
+                        crate::proto_ipc::ContextMenuRequest {
+                            request_id,
+                            items,
+                            x: position.min.x,
+                            y: position.min.y,
+                        },
+                    )),
+                };
+                let _ = self.event_pipe.send(event);
+            }
+            // Other embedder controls (select, color picker, IME) are not yet
+            // supported; dropping them falls back to their default response.
             _ => {
                 log::debug!("Unhandled embedder control; using default response");
             }
@@ -614,6 +658,29 @@ fn complete_script_dialog(dialog: SimpleDialog, answer: crate::proto_ipc::Script
     }
 }
 
+/// Complete a pending [`ContextMenu`] with the UI's selection.
+///
+/// When the UI selected an item, its action (looked up by index into the menu's
+/// items) is activated; otherwise the menu is dismissed. A separator or an
+/// out-of-range index dismisses the menu.
+fn complete_context_menu(menu: ContextMenu, answer: crate::proto_ipc::ContextMenuResponse) {
+    if !answer.selected {
+        menu.dismiss();
+        return;
+    }
+    let action = menu
+        .items()
+        .get(answer.index as usize)
+        .and_then(|item| match item {
+            ContextMenuItem::Item { action, .. } => Some(*action),
+            ContextMenuItem::Separator => None,
+        });
+    match action {
+        Some(action) => menu.select(action),
+        None => menu.dismiss(),
+    }
+}
+
 /// Complete a pending [`FilePicker`] with the UI's selection.
 ///
 /// A non-empty path list is selected and submitted; an empty list dismisses
@@ -679,7 +746,6 @@ impl<T> PendingRequests<T> {
             pending: std::collections::HashMap::new(),
         }
     }
-
     /// Store `request` and return the id the UI must echo back to complete it.
     fn insert(&mut self, request: T) -> u64 {
         let id = self.next_id;
@@ -698,6 +764,12 @@ impl<T> PendingRequests<T> {
     #[cfg_attr(not(test), allow(dead_code))]
     fn len(&self) -> usize {
         self.pending.len()
+    }
+}
+
+impl<T> Default for PendingRequests<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -787,22 +859,12 @@ pub fn run() {
     let user_content_manager = Rc::new(UserContentManager::new(&servo));
 
     let event_pipe = EventPipe::from_stdout();
-    let pending_dialogs: Rc<RefCell<PendingRequests<SimpleDialog>>> =
-        Rc::new(RefCell::new(PendingRequests::new()));
-    let pending_file_pickers: Rc<RefCell<PendingRequests<FilePicker>>> =
-        Rc::new(RefCell::new(PendingRequests::new()));
-    let pending_auth: Rc<RefCell<PendingRequests<AuthenticationRequest>>> =
-        Rc::new(RefCell::new(PendingRequests::new()));
-    let pending_permissions: Rc<RefCell<PendingRequests<ServoPermissionRequest>>> =
-        Rc::new(RefCell::new(PendingRequests::new()));
+    let pending_state = PendingState::default();
     let popups = Rc::new(PopupState::default());
     let delegate = Rc::new(ServoWebViewDelegate::new(
         rendering_context.clone(),
         event_pipe.clone(),
-        pending_dialogs.clone(),
-        pending_file_pickers.clone(),
-        pending_auth.clone(),
-        pending_permissions.clone(),
+        &pending_state,
         popups.clone(),
     ));
 
@@ -1108,7 +1170,7 @@ pub fn run() {
                             }
                         }
                         Some(crate::proto_ipc::servo_response::Payload::ScriptDialog(answer)) => {
-                            match pending_dialogs.borrow_mut().take(request_id) {
+                            match pending_state.dialogs.borrow_mut().take(request_id) {
                                 Some(dialog) => complete_script_dialog(dialog, answer),
                                 None => log::warn!(
                                     "Received dialog response for unknown request id {request_id}"
@@ -1116,7 +1178,7 @@ pub fn run() {
                             }
                         }
                         Some(crate::proto_ipc::servo_response::Payload::FileChooser(answer)) => {
-                            match pending_file_pickers.borrow_mut().take(request_id) {
+                            match pending_state.file_pickers.borrow_mut().take(request_id) {
                                 Some(picker) => complete_file_picker(picker, answer),
                                 None => log::warn!(
                                     "Received file chooser response for unknown request id {request_id}"
@@ -1124,7 +1186,7 @@ pub fn run() {
                             }
                         }
                         Some(crate::proto_ipc::servo_response::Payload::Auth(answer)) => {
-                            match pending_auth.borrow_mut().take(request_id) {
+                            match pending_state.auth.borrow_mut().take(request_id) {
                                 Some(auth) => {
                                     if answer.confirmed {
                                         auth.authenticate(answer.username, answer.password);
@@ -1137,7 +1199,7 @@ pub fn run() {
                             }
                         }
                         Some(crate::proto_ipc::servo_response::Payload::Permission(answer)) => {
-                            match pending_permissions.borrow_mut().take(request_id) {
+                            match pending_state.permissions.borrow_mut().take(request_id) {
                                 Some(permission) => {
                                     if answer.allow {
                                         permission.allow();
@@ -1147,6 +1209,14 @@ pub fn run() {
                                 }
                                 None => log::warn!(
                                     "Received permission response for unknown request id {request_id}"
+                                ),
+                            }
+                        }
+                        Some(crate::proto_ipc::servo_response::Payload::ContextMenu(answer)) => {
+                            match pending_state.context_menus.borrow_mut().take(request_id) {
+                                Some(menu) => complete_context_menu(menu, answer),
+                                None => log::warn!(
+                                    "Received context menu response for unknown request id {request_id}"
                                 ),
                             }
                         }

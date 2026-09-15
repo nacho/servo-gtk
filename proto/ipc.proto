@@ -56,6 +56,7 @@ message ServoResponse {
     FileChooserResponse file_chooser = 4;
     AuthResponse auth = 5;
     PermissionResponse permission = 6;
+    ContextMenuResponse context_menu = 7;
   }
 }
 
@@ -90,6 +91,14 @@ message AuthResponse {
 // Answer to a PermissionRequest.
 message PermissionResponse {
   bool allow = 1;
+}
+
+// Answer to a ContextMenuRequest. When `selected` is true, `index` is the
+// chosen entry's index into the request's items; otherwise the menu was
+// dismissed.
+message ContextMenuResponse {
+  bool selected = 1;
+  uint32 index = 2;
 }
 
 // Set the page zoom level, as a browser's Ctrl+/Ctrl- would: the page's
@@ -227,6 +236,9 @@ message ServoEvent {
     // target=_blank). The UI should open a new window hosting a fresh WebView
     // for `url`. No response is expected.
     CreateWebView create_web_view = 14;
+    // A context menu on web content (e.g. right-click). The UI should present
+    // the menu and reply with a ServoResponse carrying a ContextMenuResponse.
+    ContextMenuRequest context_menu_request = 15;
   }
 }
 
@@ -280,6 +292,25 @@ message PermissionRequest {
 // notification: the UI opens a new window with its own WebView.
 message CreateWebView {
   string url = 1;
+}
+
+// One entry in a context menu. A separator carries no label and is not
+// selectable; otherwise `label` is shown and `enabled` controls whether it can
+// be chosen.
+message ContextMenuEntry {
+  string label = 1;
+  bool enabled = 2;
+  bool separator = 3;
+}
+
+// A context menu to present on web content. `items` is ordered; the UI replies
+// with the index of the chosen item (into this list). `x`/`y` are the
+// device-pixel position of the triggering element, for menu placement.
+message ContextMenuRequest {
+  uint64 request_id = 1;
+  repeated ContextMenuEntry items = 2;
+  int32 x = 3;
+  int32 y = 4;
 }
 
 message FrameReady {

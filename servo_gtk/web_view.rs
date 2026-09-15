@@ -4,8 +4,8 @@
 
 use crate::key_tables::KeyTables;
 use crate::proto_ipc::{
-    AuthRequest, FileChooserRequest, PermissionRequest, ScriptDialogKind, ScriptDialogRequest,
-    ServoEvent, servo_event,
+    AuthRequest, ContextMenuRequest, FileChooserRequest, PermissionRequest, ScriptDialogKind,
+    ScriptDialogRequest, ServoEvent, servo_event,
 };
 use crate::servo_runner::{LogLevel, ServoRunner};
 use crate::user_content::UserContentManager;
@@ -757,6 +757,80 @@ impl WebView {
         });
     }
 
+    /// Present a native context menu for web content (e.g. on right-click) and
+    /// reply with the chosen entry index, or a dismissal.
+    ///
+    /// Uses a `gtk::Popover` of buttons anchored at the triggering position.
+    /// The runner reports the position in device pixels, so it is converted
+    /// back to logical coordinates for placement.
+    fn show_context_menu(&self, request: ContextMenuRequest) {
+        let request_id = request.request_id;
+        let popover = gtk::Popover::builder()
+            .autohide(true)
+            .has_arrow(false)
+            .build();
+        popover.set_parent(self);
+
+        let scale = self.scale_factor().max(1) as f64;
+        let rect = gtk::gdk::Rectangle::new(
+            (request.x as f64 / scale) as i32,
+            (request.y as f64 / scale) as i32,
+            1,
+            1,
+        );
+        popover.set_pointing_to(Some(&rect));
+
+        let menu_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        popover.set_child(Some(&menu_box));
+
+        // Single-fire responder: exactly one response per menu, whether a
+        // button was clicked or the popover was dismissed.
+        let responded = Rc::new(Cell::new(false));
+        let respond = {
+            let obj_weak = self.downgrade();
+            let popover = popover.clone();
+            let responded = responded.clone();
+            move |selected: bool, index: u32| {
+                if responded.replace(true) {
+                    return;
+                }
+                if let Some(obj) = obj_weak.upgrade()
+                    && let Some(servo) = obj.imp().servo_runner.borrow().as_ref()
+                {
+                    servo.send_context_menu_response(request_id, selected, index);
+                }
+                popover.popdown();
+            }
+        };
+
+        for (index, entry) in request.items.iter().enumerate() {
+            if entry.separator {
+                menu_box.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+                continue;
+            }
+            let button = gtk::Button::builder()
+                .label(&entry.label)
+                .sensitive(entry.enabled)
+                .has_frame(false)
+                .build();
+            let respond_item = respond.clone();
+            button.connect_clicked(move |_| respond_item(true, index as u32));
+            menu_box.append(&button);
+        }
+
+        // Closing the popover without a selection is a dismissal.
+        let respond_dismiss = respond.clone();
+        popover.connect_closed(move |_| respond_dismiss(false, 0));
+
+        // Unparent the popover once it is closed so it does not leak.
+        let popover_cleanup = popover.clone();
+        popover.connect_closed(move |_| {
+            popover_cleanup.unparent();
+        });
+
+        popover.popup();
+    }
+
     fn process_servo_event(&self, event: ServoEvent) {
         let Some(event_type) = event.event else {
             return;
@@ -849,6 +923,9 @@ impl WebView {
             }
             servo_event::Event::CreateWebView(create) => {
                 self.emit_by_name::<()>("create-web-view", &[&create.url]);
+            }
+            servo_event::Event::ContextMenuRequest(request) => {
+                self.show_context_menu(request);
             }
         }
     }
