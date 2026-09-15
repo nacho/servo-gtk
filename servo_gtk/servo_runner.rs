@@ -492,6 +492,22 @@ impl ServoRunner {
         });
     }
 
+    /// Answer a context menu request identified by `request_id`. When
+    /// `selected` is true, `index` is the chosen entry's index; otherwise the
+    /// menu was dismissed.
+    pub fn send_context_menu_response(&self, request_id: u64, selected: bool, index: u32) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::Response(
+                crate::proto_ipc::ServoResponse {
+                    request_id,
+                    payload: Some(crate::proto_ipc::servo_response::Payload::ContextMenu(
+                        crate::proto_ipc::ContextMenuResponse { selected, index },
+                    )),
+                },
+            )),
+        });
+    }
+
     pub fn handle_log_message(&self, level: LogLevel, message: &str) {
         match level {
             LogLevel::Debug => debug!("{}", message),
