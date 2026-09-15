@@ -29,6 +29,7 @@ message ServoAction {
     EvaluateJavascript evaluate_javascript = 23;
     SetZoomLevel set_zoom_level = 24;
     SetHidpiScaleFactor set_hidpi_scale_factor = 25;
+    LoadHtml load_html = 26;
   }
 }
 
@@ -47,6 +48,14 @@ message SetZoomLevel {
 // non-positive values are ignored by the runner.
 message SetHidpiScaleFactor {
   float scale = 1;
+}
+
+// Load an HTML document from an in-memory string, as WebKitWebView's
+// load_html() would. `base_url` (optional) is reserved for resolving relative
+// links; when empty the runner loads the HTML via a data: URL.
+message LoadHtml {
+  string html = 1;
+  string base_url = 2;
 }
 
 message LoadUrl {

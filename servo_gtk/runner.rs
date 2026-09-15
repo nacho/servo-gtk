@@ -431,6 +431,26 @@ fn convert_key_event(
     KeyboardEvent::new_without_event(state, key, code, location, modifiers, false, false)
 }
 
+/// Build a `data:text/html` URL from an HTML string by percent-encoding it.
+///
+/// Loading generated HTML through a data: URL is how `load_html` maps onto
+/// Servo's URL-based `load()` without a bespoke data-loading API. Every byte
+/// except the RFC 3986 unreserved set is percent-encoded, which is always safe
+/// inside a data: URL body (it never introduces a stray `#`, `%` ambiguity, or
+/// whitespace that a parser could truncate on).
+fn html_to_data_url(html: &str) -> String {
+    const UNRESERVED: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~";
+    let mut out = String::from("data:text/html;charset=utf-8,");
+    for &byte in html.as_bytes() {
+        if UNRESERVED.contains(&byte) {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
 /// Clamp a requested page-zoom level to the range Servo accepts.
 ///
 /// Servo clamps internally as well, but clamping here keeps the value the
@@ -561,6 +581,15 @@ pub fn run() {
                     log::info!("Loading URL: {}", load_url.url);
                     if let Ok(parsed_url) = Url::parse(&load_url.url) {
                         webview.load(parsed_url);
+                    }
+                }
+                servo_action::Action::LoadHtml(load_html) => {
+                    log::info!("Loading HTML ({} bytes)", load_html.html.len());
+                    let data_url = html_to_data_url(&load_html.html);
+                    if let Ok(parsed_url) = Url::parse(&data_url) {
+                        webview.load(parsed_url);
+                    } else {
+                        log::warn!("Failed to build data: URL for load_html");
                     }
                 }
                 servo_action::Action::Reload(_) => {
@@ -909,5 +938,28 @@ mod tests {
         assert_eq!(clamp_zoom_level(f64::NAN), 1.0);
         assert_eq!(clamp_zoom_level(f64::INFINITY), 1.0);
         assert_eq!(clamp_zoom_level(f64::NEG_INFINITY), 1.0);
+    }
+
+    #[test]
+    fn html_to_data_url_has_prefix_and_parses() {
+        let url = html_to_data_url("<h1>Hi</h1>");
+        assert!(url.starts_with("data:text/html;charset=utf-8,"));
+        assert!(Url::parse(&url).is_ok());
+    }
+
+    #[test]
+    fn html_to_data_url_percent_encodes_reserved_and_unicode() {
+        let url = html_to_data_url("<a href=\"x\"> café #</a>");
+        // Angle brackets, quotes, spaces and '#' must be encoded so the data:
+        // URL body is not truncated or misparsed.
+        assert!(url.contains("%3C")); // <
+        assert!(url.contains("%3E")); // >
+        assert!(url.contains("%22")); // "
+        assert!(url.contains("%20")); // space
+        assert!(url.contains("%23")); // #
+        // 'é' is two UTF-8 bytes, both encoded.
+        assert!(url.contains("%C3%A9"));
+        // Unreserved characters pass through.
+        assert!(url.contains("href"));
     }
 }

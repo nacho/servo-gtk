@@ -73,6 +73,9 @@ fn main() -> glib::ExitCode {
         let zoom_in_button = gtk::Button::from_icon_name("zoom-in-symbolic");
         zoom_in_button.set_tooltip_text(Some("Zoom in"));
 
+        let html_button = gtk::Button::from_icon_name("text-x-generic-symbolic");
+        html_button.set_tooltip_text(Some("Load a sample inline HTML document"));
+
         let spinner = gtk::Spinner::new();
         spinner.set_tooltip_text(Some("Loading"));
 
@@ -118,6 +121,20 @@ fn main() -> glib::ExitCode {
             web_view_clone.set_zoom_level(web_view_clone.zoom_level() * 1.2);
         });
 
+        // Demonstrate loading an in-memory HTML document.
+        let web_view_clone = web_view.clone();
+        html_button.connect_clicked(move |_| {
+            web_view_clone.load_html(
+                "<!DOCTYPE html>\
+                 <html><head><meta charset=\"utf-8\"><title>Inline HTML</title></head>\
+                 <body style=\"font-family: sans-serif; padding: 2rem;\">\
+                 <h1>Hello from load_html()</h1>\
+                 <p>This document was loaded from an in-memory string, \
+                 not fetched over the network.</p></body></html>",
+                None,
+            );
+        });
+
         // Keep the URL entry in sync with the actual page URI via
         // `notify::uri`. This is how a redirect would be observed.
         let url_entry_clone = url_entry.clone();
@@ -150,6 +167,7 @@ fn main() -> glib::ExitCode {
         hbox.append(&zoom_out_button);
         hbox.append(&zoom_reset_button);
         hbox.append(&zoom_in_button);
+        hbox.append(&html_button);
         hbox.append(&spinner);
         vbox.append(&hbox);
         vbox.append(&web_view);
