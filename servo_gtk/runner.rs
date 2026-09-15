@@ -31,7 +31,7 @@ use servo::{
     DeviceIntRect, DeviceVector2D, InputEvent, KeyboardEvent, MouseButton, MouseButtonAction,
     MouseButtonEvent, MouseMoveEvent, Opts, Scroll, ServoBuilder,
 };
-use servo::{EmbedderControl, SimpleDialog};
+use servo::{EmbedderControl, FilePicker, SimpleDialog};
 use servo::{RenderingContext, SoftwareRenderingContext, WebView, WebViewBuilder, WebViewDelegate};
 use std::str::FromStr;
 use std::sync::mpsc;
@@ -40,9 +40,9 @@ use std::thread;
 use url::Url;
 
 use crate::proto_ipc::{
-    CursorChanged, FrameReady, LoadEnd, LoadStart, LogLevel, LogMessage, PingRequest,
-    ScriptDialogKind, ScriptDialogRequest, ScriptMessage, ServoAction, ServoEvent, TitleChanged,
-    UrlChanged, servo_action, servo_event,
+    CursorChanged, FileChooserRequest, FrameReady, LoadEnd, LoadStart, LogLevel, LogMessage,
+    PingRequest, ScriptDialogKind, ScriptDialogRequest, ScriptMessage, ServoAction, ServoEvent,
+    TitleChanged, UrlChanged, servo_action, servo_event,
 };
 
 /// Prefix used by the injected script-message shim when forwarding a page
@@ -186,6 +186,8 @@ struct ServoWebViewDelegate {
     /// Script dialogs (alert/confirm/prompt) awaiting a UI response, shared
     /// with the runner loop which completes them when the response arrives.
     pending_dialogs: Rc<RefCell<PendingRequests<SimpleDialog>>>,
+    /// `<input type=file>` pickers awaiting a UI response.
+    pending_file_pickers: Rc<RefCell<PendingRequests<FilePicker>>>,
 }
 
 impl ServoWebViewDelegate {
@@ -193,11 +195,13 @@ impl ServoWebViewDelegate {
         rendering_context: Rc<dyn RenderingContext>,
         event_pipe: EventPipe,
         pending_dialogs: Rc<RefCell<PendingRequests<SimpleDialog>>>,
+        pending_file_pickers: Rc<RefCell<PendingRequests<FilePicker>>>,
     ) -> Self {
         Self {
             rendering_context,
             event_pipe,
             pending_dialogs,
+            pending_file_pickers,
         }
     }
 }
@@ -344,9 +348,26 @@ impl WebViewDelegate for ServoWebViewDelegate {
                 };
                 let _ = self.event_pipe.send(event);
             }
-            // Other embedder controls (select, color picker, file picker,
-            // context menu, IME) are handled elsewhere or not yet supported;
-            // dropping them falls back to their default (cancelled) response.
+            EmbedderControl::FilePicker(file_picker) => {
+                let allow_multiple = file_picker.allow_select_multiple();
+                let filter_patterns = file_picker
+                    .filter_patterns()
+                    .iter()
+                    .map(|pattern| pattern.0.clone())
+                    .collect();
+                let request_id = self.pending_file_pickers.borrow_mut().insert(file_picker);
+                let event = ServoEvent {
+                    event: Some(servo_event::Event::FileChooserRequest(FileChooserRequest {
+                        request_id,
+                        allow_multiple,
+                        filter_patterns,
+                    })),
+                };
+                let _ = self.event_pipe.send(event);
+            }
+            // Other embedder controls (select, color picker, context menu, IME)
+            // are handled elsewhere or not yet supported; dropping them falls
+            // back to their default (cancelled) response.
             _ => {
                 log::debug!("Unhandled embedder control; using default response");
             }
@@ -514,6 +535,24 @@ fn complete_script_dialog(dialog: SimpleDialog, answer: crate::proto_ipc::Script
     }
 }
 
+/// Complete a pending [`FilePicker`] with the UI's selection.
+///
+/// A non-empty path list is selected and submitted; an empty list dismisses
+/// the picker (equivalent to the user cancelling).
+fn complete_file_picker(mut picker: FilePicker, answer: crate::proto_ipc::FileChooserResponse) {
+    if answer.paths.is_empty() {
+        picker.dismiss();
+    } else {
+        let paths: Vec<std::path::PathBuf> = answer
+            .paths
+            .into_iter()
+            .map(std::path::PathBuf::from)
+            .collect();
+        picker.select(&paths);
+        picker.submit();
+    }
+}
+
 /// Build a `data:text/html` URL from an HTML string by percent-encoding it.
 ///
 /// Loading generated HTML through a data: URL is how `load_html` maps onto
@@ -671,10 +710,13 @@ pub fn run() {
     let event_pipe = EventPipe::from_stdout();
     let pending_dialogs: Rc<RefCell<PendingRequests<SimpleDialog>>> =
         Rc::new(RefCell::new(PendingRequests::new()));
+    let pending_file_pickers: Rc<RefCell<PendingRequests<FilePicker>>> =
+        Rc::new(RefCell::new(PendingRequests::new()));
     let delegate = Rc::new(ServoWebViewDelegate::new(
         rendering_context.clone(),
         event_pipe.clone(),
         pending_dialogs.clone(),
+        pending_file_pickers.clone(),
     ));
 
     let webview = WebViewBuilder::new(&servo, rendering_context)
@@ -983,6 +1025,14 @@ pub fn run() {
                                 Some(dialog) => complete_script_dialog(dialog, answer),
                                 None => log::warn!(
                                     "Received dialog response for unknown request id {request_id}"
+                                ),
+                            }
+                        }
+                        Some(crate::proto_ipc::servo_response::Payload::FileChooser(answer)) => {
+                            match pending_file_pickers.borrow_mut().take(request_id) {
+                                Some(picker) => complete_file_picker(picker, answer),
+                                None => log::warn!(
+                                    "Received file chooser response for unknown request id {request_id}"
                                 ),
                             }
                         }

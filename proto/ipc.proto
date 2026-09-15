@@ -53,6 +53,7 @@ message ServoResponse {
   oneof payload {
     PingResponse ping = 2;
     ScriptDialogResponse script_dialog = 3;
+    FileChooserResponse file_chooser = 4;
   }
 }
 
@@ -68,6 +69,12 @@ message PingResponse {
 message ScriptDialogResponse {
   bool confirmed = 1;
   string value = 2;
+}
+
+// Answer to a FileChooserRequest. `paths` are the absolute paths of the
+// selected files; an empty list means the picker was cancelled.
+message FileChooserResponse {
+  repeated string paths = 1;
 }
 
 // Set the page zoom level, as a browser's Ctrl+/Ctrl- would: the page's
@@ -191,6 +198,9 @@ message ServoEvent {
     // Script-initiated dialog (alert/confirm/prompt). The UI must present it
     // and reply with a ServoResponse carrying a ScriptDialogResponse.
     ScriptDialogRequest script_dialog_request = 10;
+    // A <input type=file> file chooser. The UI must present a file picker and
+    // reply with a ServoResponse carrying a FileChooserResponse.
+    FileChooserRequest file_chooser_request = 11;
   }
 }
 
@@ -213,6 +223,15 @@ message ScriptDialogRequest {
   ScriptDialogKind kind = 2;
   string message = 3;
   string default_value = 4;
+}
+
+// A <input type=file> file chooser. `allow_multiple` reflects the `multiple`
+// attribute. `filter_patterns` are glob-style patterns (e.g. "*.png") the UI
+// may use to filter selectable files.
+message FileChooserRequest {
+  uint64 request_id = 1;
+  bool allow_multiple = 2;
+  repeated string filter_patterns = 3;
 }
 
 message FrameReady {
