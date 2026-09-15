@@ -601,3 +601,82 @@ impl Default for KeyTables {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lookup(key: gdk::Key) -> Option<(String, bool, KeyLocation)> {
+        KeyTables::new().key_from_keyval(key.into_glib())
+    }
+
+    #[test]
+    fn maps_function_keys_as_named_standard_keys() {
+        for (key, name) in [
+            (gdk::Key::F1, "F1"),
+            (gdk::Key::F5, "F5"),
+            (gdk::Key::F12, "F12"),
+            (gdk::Key::F35, "F35"),
+        ] {
+            let (mapped_name, is_character, location) =
+                lookup(key).unwrap_or_else(|| panic!("{name} should map"));
+            assert_eq!(mapped_name, name);
+            assert!(!is_character, "{name} must be a named (non-character) key");
+            assert_eq!(location, KeyLocation::Standard);
+        }
+    }
+
+    #[test]
+    fn maps_insert_as_named_standard_key() {
+        let (name, is_character, location) = lookup(gdk::Key::Insert).expect("Insert should map");
+        assert_eq!(name, "Insert");
+        assert!(!is_character);
+        assert_eq!(location, KeyLocation::Standard);
+    }
+
+    #[test]
+    fn maps_numpad_insert_with_numpad_location() {
+        let (name, is_character, location) =
+            lookup(gdk::Key::KP_Insert).expect("KP_Insert should map");
+        assert_eq!(name, "Insert");
+        assert!(!is_character);
+        assert_eq!(location, KeyLocation::Numpad);
+    }
+
+    #[test]
+    fn maps_arrow_keys() {
+        assert_eq!(lookup(gdk::Key::Up).unwrap().0, "ArrowUp");
+        assert_eq!(lookup(gdk::Key::Down).unwrap().0, "ArrowDown");
+        assert_eq!(lookup(gdk::Key::Left).unwrap().0, "ArrowLeft");
+        assert_eq!(lookup(gdk::Key::Right).unwrap().0, "ArrowRight");
+        // Numpad arrows carry the numpad location.
+        let (name, _, location) = lookup(gdk::Key::KP_Up).unwrap();
+        assert_eq!(name, "ArrowUp");
+        assert_eq!(location, KeyLocation::Numpad);
+    }
+
+    #[test]
+    fn modifier_keys_carry_left_right_location() {
+        assert_eq!(lookup(gdk::Key::Control_L).unwrap().2, KeyLocation::Left);
+        assert_eq!(lookup(gdk::Key::Control_R).unwrap().2, KeyLocation::Right);
+        assert_eq!(lookup(gdk::Key::Shift_L).unwrap().2, KeyLocation::Left);
+        assert_eq!(lookup(gdk::Key::Shift_R).unwrap().2, KeyLocation::Right);
+    }
+
+    #[test]
+    fn printable_characters_map_as_characters() {
+        // A plain letter should come back as a character, not a named key.
+        let (name, is_character, location) = lookup(gdk::Key::a).expect("'a' should map");
+        assert_eq!(name, "a");
+        assert!(is_character);
+        assert_eq!(location, KeyLocation::Standard);
+    }
+
+    #[test]
+    fn numpad_digits_map_as_characters_with_numpad_location() {
+        let (name, is_character, location) = lookup(gdk::Key::KP_5).expect("KP_5 should map");
+        assert_eq!(name, "5");
+        assert!(is_character);
+        assert_eq!(location, KeyLocation::Numpad);
+    }
+}
