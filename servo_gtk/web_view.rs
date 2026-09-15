@@ -19,6 +19,17 @@ use std::sync::OnceLock;
 
 const G_LOG_DOMAIN: &str = "ServoGtk";
 
+/// Convert a logical widget coordinate or delta to the device pixels Servo
+/// renders and receives input in.
+///
+/// GTK reports a `scale-factor` of 1 on a standard display and 2 on a doubled
+/// HiDPI display. Servo's surface is sized in device pixels, so pointer and
+/// scroll values measured in logical units must be multiplied by the same
+/// factor. A non-positive scale factor is treated as 1.
+fn logical_to_device(value: f64, scale_factor: i32) -> f64 {
+    value * scale_factor.max(1) as f64
+}
+
 /// The state of a page load, delivered by the [`WebView::connect_load_changed`]
 /// signal.
 ///
@@ -133,7 +144,8 @@ mod imp {
                 if let Some(obj) = obj_weak.upgrade() {
                     let imp = obj.imp();
                     if let Some(servo) = imp.servo_runner.borrow().as_ref() {
-                        servo.motion(x, y);
+                        let scale = obj.scale_factor();
+                        servo.motion(logical_to_device(x, scale), logical_to_device(y, scale));
                     }
                 }
             });
@@ -147,6 +159,9 @@ mod imp {
                     if let Some(servo) = imp.servo_runner.borrow().as_ref()
                         && let Some((x, y)) = obj.translate_event_coordinates(event)
                     {
+                        let scale = obj.scale_factor();
+                        let x = logical_to_device(x, scale);
+                        let y = logical_to_device(y, scale);
                         match event.event_type() {
                             gdk::EventType::ButtonPress => {
                                 if let Some(button_event) = event.downcast_ref::<gdk::ButtonEvent>()
@@ -218,12 +233,31 @@ mod imp {
                 if let Some(obj) = obj_weak.upgrade() {
                     let imp = obj.imp();
                     if let Some(servo) = imp.servo_runner.borrow().as_ref() {
-                        servo.scroll(delta_x, delta_y);
+                        let scale = obj.scale_factor();
+                        servo.scroll(
+                            logical_to_device(delta_x, scale),
+                            logical_to_device(delta_y, scale),
+                        );
                     }
                 }
                 glib::Propagation::Stop
             });
             self.obj().add_controller(scroll_controller);
+
+            // When the widget moves to a monitor with a different scale factor,
+            // its logical size is unchanged so `size_allocate` does not fire.
+            // Re-sync the Servo surface so it renders at the new device
+            // resolution and the page sees the right devicePixelRatio.
+            self.obj().connect_scale_factor_notify(move |obj| {
+                let imp = obj.imp();
+                if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+                    let scale = obj.scale_factor().max(1);
+                    let width = gtk::prelude::WidgetExt::width(obj) as u32 * scale as u32;
+                    let height = gtk::prelude::WidgetExt::height(obj) as u32 * scale as u32;
+                    servo.set_hidpi_scale_factor(scale as f32);
+                    servo.resize(width, height);
+                }
+            });
 
             self.obj().set_focusable(true);
             info!("Webview constructed");
@@ -251,7 +285,16 @@ mod imp {
 
         fn size_allocate(&self, width: i32, height: i32, _baseline: i32) {
             if let Some(servo) = self.servo_runner.borrow().as_ref() {
-                servo.resize(width as u32, height as u32);
+                // Servo's surface is sized in device pixels. Multiply the
+                // logical allocation by the widget's scale factor and hand that
+                // same factor to Servo as the HiDPI scale, so the page is laid
+                // out at the right size rather than upscaled from logical size.
+                let scale = self.obj().scale_factor().max(1);
+                servo.set_hidpi_scale_factor(scale as f32);
+                servo.resize(
+                    (width.max(0) as u32) * scale as u32,
+                    (height.max(0) as u32) * scale as u32,
+                );
             }
         }
     }
@@ -491,5 +534,18 @@ mod tests {
             let recovered = value.get::<LoadEvent>().expect("value holds a LoadEvent");
             assert_eq!(event, recovered);
         }
+    }
+
+    #[test]
+    fn logical_to_device_scales_by_factor() {
+        assert_eq!(logical_to_device(100.0, 1), 100.0);
+        assert_eq!(logical_to_device(100.0, 2), 200.0);
+        assert_eq!(logical_to_device(50.5, 2), 101.0);
+    }
+
+    #[test]
+    fn logical_to_device_treats_non_positive_scale_as_one() {
+        assert_eq!(logical_to_device(100.0, 0), 100.0);
+        assert_eq!(logical_to_device(100.0, -1), 100.0);
     }
 }

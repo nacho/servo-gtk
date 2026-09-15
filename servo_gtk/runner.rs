@@ -19,7 +19,7 @@ use std::rc::Rc;
 use core::time::Duration;
 use dpi::PhysicalSize;
 use embedder_traits::{WebViewPoint, WebViewVector};
-use euclid::Point2D;
+use euclid::{Point2D, Scale};
 use keyboard_types::{Code, Key, KeyState, Location, Modifiers, NamedKey};
 use prost::Message;
 
@@ -777,6 +777,13 @@ pub fn run() {
                     let zoom = clamp_zoom_level(set_zoom_level.level);
                     log::debug!("Setting page zoom to {zoom}");
                     webview.set_page_zoom(zoom);
+                }
+                servo_action::Action::SetHidpiScaleFactor(set_hidpi) => {
+                    let scale = set_hidpi.scale;
+                    if scale.is_finite() && scale > 0.0 {
+                        log::debug!("Setting HiDPI scale factor to {scale}");
+                        webview.set_hidpi_scale_factor(Scale::new(scale));
+                    }
                 }
             }
         }

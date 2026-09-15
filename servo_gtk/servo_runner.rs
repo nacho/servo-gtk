@@ -372,6 +372,14 @@ impl ServoRunner {
         });
     }
 
+    pub fn set_hidpi_scale_factor(&self, scale: f32) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::SetHidpiScaleFactor(
+                crate::proto_ipc::SetHidpiScaleFactor { scale },
+            )),
+        });
+    }
+
     pub fn handle_log_message(&self, level: LogLevel, message: &str) {
         match level {
             LogLevel::Debug => debug!("{}", message),
