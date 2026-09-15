@@ -115,6 +115,13 @@ mod imp {
                     Signal::builder("load-changed")
                         .param_types([LoadEvent::static_type()])
                         .build(),
+                    // Emitted when page content requests a new top-level
+                    // WebView (window.open / target=_blank). The single string
+                    // parameter is the destination URL. A handler is expected
+                    // to open a new window hosting a fresh WebView for it.
+                    Signal::builder("create-web-view")
+                        .param_types([String::static_type()])
+                        .build(),
                 ]
             })
         }
@@ -425,6 +432,27 @@ impl WebView {
             false,
             glib::closure_local!(move |obj: &Self, event: LoadEvent| {
                 f(obj, event);
+            }),
+        )
+    }
+
+    /// Connect to the `create-web-view` signal, emitted when page content
+    /// requests a new top-level web view (`window.open` / `target=_blank`).
+    ///
+    /// The handler receives the destination URL and is expected to open a new
+    /// window hosting a fresh [`WebView`] loading it. Because the engine runs
+    /// one view per subprocess, the auxiliary view Servo created is not
+    /// rendered here; this signal lets the embedder recreate the popup as a
+    /// real, fully functional window.
+    pub fn connect_create_web_view<F: Fn(&Self, &str) + 'static>(
+        &self,
+        f: F,
+    ) -> glib::SignalHandlerId {
+        self.connect_closure(
+            "create-web-view",
+            false,
+            glib::closure_local!(move |obj: &Self, url: String| {
+                f(obj, &url);
             }),
         )
     }
@@ -818,6 +846,9 @@ impl WebView {
             }
             servo_event::Event::PermissionRequest(request) => {
                 self.show_permission_dialog(request);
+            }
+            servo_event::Event::CreateWebView(create) => {
+                self.emit_by_name::<()>("create-web-view", &[&create.url]);
             }
         }
     }

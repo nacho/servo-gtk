@@ -26,7 +26,9 @@ use prost::Message;
 
 use servo::LoadStatus;
 use servo::user_contents::UserStyleSheet;
-use servo::{AuthenticationRequest, PermissionRequest as ServoPermissionRequest};
+use servo::{
+    AuthenticationRequest, CreateNewWebViewRequest, PermissionRequest as ServoPermissionRequest,
+};
 use servo::{ConsoleLogLevel, UserContentManager, UserScript};
 use servo::{
     DeviceIntRect, DeviceVector2D, InputEvent, KeyboardEvent, MouseButton, MouseButtonAction,
@@ -193,6 +195,22 @@ struct ServoWebViewDelegate {
     pending_auth: Rc<RefCell<PendingRequests<AuthenticationRequest>>>,
     /// Permission prompts awaiting an allow/deny decision from the UI.
     pending_permissions: Rc<RefCell<PendingRequests<ServoPermissionRequest>>>,
+    /// Auxiliary WebViews created for popups (window.open / target=_blank).
+    ///
+    /// Servo destroys a newly created WebView immediately unless the embedder
+    /// keeps a handle, so we retain them here until their destination URL is
+    /// known. Because this runner drives a single rendering context, these
+    /// auxiliary views are not painted: once the URL arrives (via
+    /// [`WebViewDelegate::notify_url_changed`]) we surface it to the UI as a
+    /// `CreateWebView` event so a real top-level window can host it, then drop
+    /// the auxiliary view.
+    popups: Rc<PopupState>,
+}
+
+/// State tracking auxiliary popup WebViews and the id of the main one.
+#[derive(Default)]
+struct PopupState {
+    aux: RefCell<Vec<WebView>>,
 }
 
 impl ServoWebViewDelegate {
@@ -203,6 +221,7 @@ impl ServoWebViewDelegate {
         pending_file_pickers: Rc<RefCell<PendingRequests<FilePicker>>>,
         pending_auth: Rc<RefCell<PendingRequests<AuthenticationRequest>>>,
         pending_permissions: Rc<RefCell<PendingRequests<ServoPermissionRequest>>>,
+        popups: Rc<PopupState>,
     ) -> Self {
         Self {
             rendering_context,
@@ -211,6 +230,7 @@ impl ServoWebViewDelegate {
             pending_file_pickers,
             pending_auth,
             pending_permissions,
+            popups,
         }
     }
 }
@@ -342,6 +362,18 @@ impl WebViewDelegate for ServoWebViewDelegate {
             )),
         };
         let _ = self.event_pipe.send(event);
+    }
+
+    fn request_create_new(&self, _parent_webview: WebView, request: CreateNewWebViewRequest) {
+        // Build the auxiliary WebView so Servo's window.open()/target=_blank
+        // succeeds and is not immediately torn down. This runner drives a
+        // single rendering context, so we do not paint the auxiliary view; we
+        // keep it alive only long enough to learn its destination URL
+        // (delivered via notify_url_changed), which we then surface to the UI
+        // as a CreateWebView event so a real top-level window can host a fresh
+        // WebView for it. The auxiliary view is dropped at that point.
+        let webview = request.builder(self.rendering_context.clone()).build();
+        self.popups.aux.borrow_mut().push(webview);
     }
 
     fn request_permission(&self, _webview: WebView, request: ServoPermissionRequest) {
@@ -763,6 +795,7 @@ pub fn run() {
         Rc::new(RefCell::new(PendingRequests::new()));
     let pending_permissions: Rc<RefCell<PendingRequests<ServoPermissionRequest>>> =
         Rc::new(RefCell::new(PendingRequests::new()));
+    let popups = Rc::new(PopupState::default());
     let delegate = Rc::new(ServoWebViewDelegate::new(
         rendering_context.clone(),
         event_pipe.clone(),
@@ -770,6 +803,7 @@ pub fn run() {
         pending_file_pickers.clone(),
         pending_auth.clone(),
         pending_permissions.clone(),
+        popups.clone(),
     ));
 
     let webview = WebViewBuilder::new(&servo, rendering_context)
@@ -1126,6 +1160,32 @@ pub fn run() {
 
         // Spin servo event loop
         servo.spin_event_loop();
+
+        // Surface any auxiliary popup WebViews whose destination URL is now
+        // known. We do not render them (single rendering context), so we hand
+        // the URL to the UI as a CreateWebView event and drop the auxiliary
+        // view; the UI opens a real top-level window with its own WebView.
+        {
+            let mut aux = popups.aux.borrow_mut();
+            aux.retain(|webview| match webview.url() {
+                Some(url) => {
+                    let url = url.to_string();
+                    // Ignore the transient about:blank a popup starts on.
+                    if url.is_empty() || url == "about:blank" {
+                        return true;
+                    }
+                    log::info!("Popup requested; surfacing new WebView for {url}");
+                    let event = ServoEvent {
+                        event: Some(servo_event::Event::CreateWebView(
+                            crate::proto_ipc::CreateWebView { url },
+                        )),
+                    };
+                    let _ = event_pipe.send(event);
+                    false
+                }
+                None => true,
+            });
+        }
     }
 }
 
