@@ -52,6 +52,7 @@ message ServoResponse {
   uint64 request_id = 1;
   oneof payload {
     PingResponse ping = 2;
+    ScriptDialogResponse script_dialog = 3;
   }
 }
 
@@ -59,6 +60,14 @@ message ServoResponse {
 // test.
 message PingResponse {
   bool ok = 1;
+}
+
+// Answer to a ScriptDialogRequest. `confirmed` is true when the user accepted
+// (OK), false when cancelled/dismissed. `value` carries the prompt text when
+// the dialog was a PROMPT and was confirmed.
+message ScriptDialogResponse {
+  bool confirmed = 1;
+  string value = 2;
 }
 
 // Set the page zoom level, as a browser's Ctrl+/Ctrl- would: the page's
@@ -179,12 +188,31 @@ message ServoEvent {
     // ServoResponse action carrying the same request_id. Used to drive native
     // UI for delegate features. PingRequest exercises the channel for testing.
     PingRequest ping_request = 9;
+    // Script-initiated dialog (alert/confirm/prompt). The UI must present it
+    // and reply with a ServoResponse carrying a ScriptDialogResponse.
+    ScriptDialogRequest script_dialog_request = 10;
   }
 }
 
 // See ServoEvent.ping_request.
 message PingRequest {
   uint64 request_id = 1;
+}
+
+enum ScriptDialogKind {
+  ALERT = 0;
+  CONFIRM = 1;
+  PROMPT = 2;
+}
+
+// A script dialog (window.alert/confirm/prompt) that the UI must present. For
+// ALERT there is only an OK button; CONFIRM has OK/Cancel; PROMPT additionally
+// shows a text entry pre-filled with `default_value`.
+message ScriptDialogRequest {
+  uint64 request_id = 1;
+  ScriptDialogKind kind = 2;
+  string message = 3;
+  string default_value = 4;
 }
 
 message FrameReady {
