@@ -4,7 +4,8 @@
 
 use crate::key_tables::KeyTables;
 use crate::proto_ipc::{
-    FileChooserRequest, ScriptDialogKind, ScriptDialogRequest, ServoEvent, servo_event,
+    AuthRequest, FileChooserRequest, PermissionRequest, ScriptDialogKind, ScriptDialogRequest,
+    ServoEvent, servo_event,
 };
 use crate::servo_runner::{LogLevel, ServoRunner};
 use crate::user_content::UserContentManager;
@@ -613,6 +614,121 @@ impl WebView {
         }
     }
 
+    /// Present an HTTP authentication prompt (username + password) and reply
+    /// with the entered credentials, or a cancellation if dismissed.
+    fn show_auth_dialog(&self, request: AuthRequest) {
+        let request_id = request.request_id;
+        let parent = gtk::prelude::WidgetExt::root(self).and_downcast::<gtk::Window>();
+        let window = gtk::Window::builder()
+            .title("Authentication Required")
+            .modal(true)
+            .resizable(false)
+            .build();
+        if let Some(parent) = parent.as_ref() {
+            window.set_transient_for(Some(parent));
+        }
+
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        content.set_margin_top(12);
+        content.set_margin_bottom(12);
+        content.set_margin_start(12);
+        content.set_margin_end(12);
+
+        let kind = if request.for_proxy { "proxy" } else { "server" };
+        let label = gtk::Label::new(Some(&format!(
+            "The {kind} at {} requires a username and password.",
+            request.url
+        )));
+        label.set_wrap(true);
+        label.set_xalign(0.0);
+        content.append(&label);
+
+        let user_entry = gtk::Entry::builder().placeholder_text("Username").build();
+        let pass_entry = gtk::Entry::builder()
+            .placeholder_text("Password")
+            .visibility(false)
+            .activates_default(true)
+            .build();
+        content.append(&user_entry);
+        content.append(&pass_entry);
+
+        let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        buttons.set_halign(gtk::Align::End);
+        let cancel_button = gtk::Button::with_label("Cancel");
+        let ok_button = gtk::Button::with_label("Authenticate");
+        ok_button.add_css_class("suggested-action");
+        buttons.append(&cancel_button);
+        buttons.append(&ok_button);
+        content.append(&buttons);
+
+        window.set_child(Some(&content));
+
+        let responded = Rc::new(Cell::new(false));
+        let respond = {
+            let obj_weak = self.downgrade();
+            let window = window.clone();
+            let responded = responded.clone();
+            move |confirmed: bool, username: String, password: String| {
+                if responded.replace(true) {
+                    return;
+                }
+                if let Some(obj) = obj_weak.upgrade()
+                    && let Some(servo) = obj.imp().servo_runner.borrow().as_ref()
+                {
+                    servo.send_auth_response(request_id, confirmed, &username, &password);
+                }
+                window.close();
+            }
+        };
+
+        let respond_cancel = respond.clone();
+        cancel_button.connect_clicked(move |_| respond_cancel(false, String::new(), String::new()));
+
+        let (user_clone, pass_clone) = (user_entry.clone(), pass_entry.clone());
+        let respond_ok = respond.clone();
+        ok_button.connect_clicked(move |_| {
+            respond_ok(
+                true,
+                user_clone.text().to_string(),
+                pass_clone.text().to_string(),
+            )
+        });
+
+        let respond_close = respond;
+        window.connect_close_request(move |_| {
+            respond_close(false, String::new(), String::new());
+            glib::Propagation::Proceed
+        });
+
+        window.present();
+    }
+
+    /// Present an allow/deny permission prompt and reply with the decision.
+    fn show_permission_dialog(&self, request: PermissionRequest) {
+        let request_id = request.request_id;
+        let parent = gtk::prelude::WidgetExt::root(self).and_downcast::<gtk::Window>();
+        let dialog = gtk::AlertDialog::builder()
+            .message(format!(
+                "This page is requesting permission to use: {}",
+                request.feature_name
+            ))
+            .modal(true)
+            .build();
+        dialog.set_buttons(&["Deny", "Allow"]);
+        dialog.set_cancel_button(0);
+        dialog.set_default_button(1);
+
+        let obj_weak = self.downgrade();
+        dialog.choose(parent.as_ref(), gio::Cancellable::NONE, move |result| {
+            let allow = matches!(result, Ok(1));
+            if let Some(obj) = obj_weak.upgrade()
+                && let Some(servo) = obj.imp().servo_runner.borrow().as_ref()
+            {
+                servo.send_permission_response(request_id, allow);
+            }
+        });
+    }
+
     fn process_servo_event(&self, event: ServoEvent) {
         let Some(event_type) = event.event else {
             return;
@@ -696,6 +812,12 @@ impl WebView {
             }
             servo_event::Event::FileChooserRequest(request) => {
                 self.show_file_chooser(request);
+            }
+            servo_event::Event::AuthRequest(request) => {
+                self.show_auth_dialog(request);
+            }
+            servo_event::Event::PermissionRequest(request) => {
+                self.show_permission_dialog(request);
             }
         }
     }

@@ -26,6 +26,7 @@ use prost::Message;
 
 use servo::LoadStatus;
 use servo::user_contents::UserStyleSheet;
+use servo::{AuthenticationRequest, PermissionRequest as ServoPermissionRequest};
 use servo::{ConsoleLogLevel, UserContentManager, UserScript};
 use servo::{
     DeviceIntRect, DeviceVector2D, InputEvent, KeyboardEvent, MouseButton, MouseButtonAction,
@@ -188,6 +189,10 @@ struct ServoWebViewDelegate {
     pending_dialogs: Rc<RefCell<PendingRequests<SimpleDialog>>>,
     /// `<input type=file>` pickers awaiting a UI response.
     pending_file_pickers: Rc<RefCell<PendingRequests<FilePicker>>>,
+    /// HTTP authentication challenges awaiting credentials from the UI.
+    pending_auth: Rc<RefCell<PendingRequests<AuthenticationRequest>>>,
+    /// Permission prompts awaiting an allow/deny decision from the UI.
+    pending_permissions: Rc<RefCell<PendingRequests<ServoPermissionRequest>>>,
 }
 
 impl ServoWebViewDelegate {
@@ -196,12 +201,16 @@ impl ServoWebViewDelegate {
         event_pipe: EventPipe,
         pending_dialogs: Rc<RefCell<PendingRequests<SimpleDialog>>>,
         pending_file_pickers: Rc<RefCell<PendingRequests<FilePicker>>>,
+        pending_auth: Rc<RefCell<PendingRequests<AuthenticationRequest>>>,
+        pending_permissions: Rc<RefCell<PendingRequests<ServoPermissionRequest>>>,
     ) -> Self {
         Self {
             rendering_context,
             event_pipe,
             pending_dialogs,
             pending_file_pickers,
+            pending_auth,
+            pending_permissions,
         }
     }
 }
@@ -310,6 +319,44 @@ impl WebViewDelegate for ServoWebViewDelegate {
         if let Some(event) = parse_script_message(&message) {
             let _ = self.event_pipe.send(event);
         }
+    }
+
+    fn request_authentication(
+        &self,
+        _webview: WebView,
+        authentication_request: AuthenticationRequest,
+    ) {
+        let url = authentication_request.url().to_string();
+        let for_proxy = authentication_request.for_proxy();
+        let request_id = self
+            .pending_auth
+            .borrow_mut()
+            .insert(authentication_request);
+        let event = ServoEvent {
+            event: Some(servo_event::Event::AuthRequest(
+                crate::proto_ipc::AuthRequest {
+                    request_id,
+                    url,
+                    for_proxy,
+                },
+            )),
+        };
+        let _ = self.event_pipe.send(event);
+    }
+
+    fn request_permission(&self, _webview: WebView, request: ServoPermissionRequest) {
+        // PermissionFeature derives Debug; use it for a human-readable label.
+        let feature_name = format!("{:?}", request.feature());
+        let request_id = self.pending_permissions.borrow_mut().insert(request);
+        let event = ServoEvent {
+            event: Some(servo_event::Event::PermissionRequest(
+                crate::proto_ipc::PermissionRequest {
+                    request_id,
+                    feature_name,
+                },
+            )),
+        };
+        let _ = self.event_pipe.send(event);
     }
 
     fn show_embedder_control(&self, _webview: WebView, embedder_control: EmbedderControl) {
@@ -712,11 +759,17 @@ pub fn run() {
         Rc::new(RefCell::new(PendingRequests::new()));
     let pending_file_pickers: Rc<RefCell<PendingRequests<FilePicker>>> =
         Rc::new(RefCell::new(PendingRequests::new()));
+    let pending_auth: Rc<RefCell<PendingRequests<AuthenticationRequest>>> =
+        Rc::new(RefCell::new(PendingRequests::new()));
+    let pending_permissions: Rc<RefCell<PendingRequests<ServoPermissionRequest>>> =
+        Rc::new(RefCell::new(PendingRequests::new()));
     let delegate = Rc::new(ServoWebViewDelegate::new(
         rendering_context.clone(),
         event_pipe.clone(),
         pending_dialogs.clone(),
         pending_file_pickers.clone(),
+        pending_auth.clone(),
+        pending_permissions.clone(),
     ));
 
     let webview = WebViewBuilder::new(&servo, rendering_context)
@@ -1033,6 +1086,33 @@ pub fn run() {
                                 Some(picker) => complete_file_picker(picker, answer),
                                 None => log::warn!(
                                     "Received file chooser response for unknown request id {request_id}"
+                                ),
+                            }
+                        }
+                        Some(crate::proto_ipc::servo_response::Payload::Auth(answer)) => {
+                            match pending_auth.borrow_mut().take(request_id) {
+                                Some(auth) => {
+                                    if answer.confirmed {
+                                        auth.authenticate(answer.username, answer.password);
+                                    }
+                                    // Dropping without authenticate() cancels.
+                                }
+                                None => log::warn!(
+                                    "Received auth response for unknown request id {request_id}"
+                                ),
+                            }
+                        }
+                        Some(crate::proto_ipc::servo_response::Payload::Permission(answer)) => {
+                            match pending_permissions.borrow_mut().take(request_id) {
+                                Some(permission) => {
+                                    if answer.allow {
+                                        permission.allow();
+                                    } else {
+                                        permission.deny();
+                                    }
+                                }
+                                None => log::warn!(
+                                    "Received permission response for unknown request id {request_id}"
                                 ),
                             }
                         }

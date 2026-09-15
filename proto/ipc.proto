@@ -54,6 +54,8 @@ message ServoResponse {
     PingResponse ping = 2;
     ScriptDialogResponse script_dialog = 3;
     FileChooserResponse file_chooser = 4;
+    AuthResponse auth = 5;
+    PermissionResponse permission = 6;
   }
 }
 
@@ -75,6 +77,19 @@ message ScriptDialogResponse {
 // selected files; an empty list means the picker was cancelled.
 message FileChooserResponse {
   repeated string paths = 1;
+}
+
+// Answer to an AuthRequest. When `confirmed` is false the challenge is
+// cancelled and `username`/`password` are ignored.
+message AuthResponse {
+  bool confirmed = 1;
+  string username = 2;
+  string password = 3;
+}
+
+// Answer to a PermissionRequest.
+message PermissionResponse {
+  bool allow = 1;
 }
 
 // Set the page zoom level, as a browser's Ctrl+/Ctrl- would: the page's
@@ -201,6 +216,13 @@ message ServoEvent {
     // A <input type=file> file chooser. The UI must present a file picker and
     // reply with a ServoResponse carrying a FileChooserResponse.
     FileChooserRequest file_chooser_request = 11;
+    // An HTTP authentication challenge. The UI should prompt for credentials
+    // and reply with a ServoResponse carrying an AuthResponse.
+    AuthRequest auth_request = 12;
+    // A permission request (geolocation, notifications, ...). The UI should
+    // prompt allow/deny and reply with a ServoResponse carrying a
+    // PermissionResponse.
+    PermissionRequest permission_request = 13;
   }
 }
 
@@ -232,6 +254,21 @@ message FileChooserRequest {
   uint64 request_id = 1;
   bool allow_multiple = 2;
   repeated string filter_patterns = 3;
+}
+
+// An HTTP authentication challenge. `url` is the resource that triggered it and
+// `for_proxy` indicates a proxy-server (rather than origin-server) challenge.
+message AuthRequest {
+  uint64 request_id = 1;
+  string url = 2;
+  bool for_proxy = 3;
+}
+
+// A request from page content to use a permission-gated feature.
+// `feature_name` is a human-readable name (e.g. "Geolocation").
+message PermissionRequest {
+  uint64 request_id = 1;
+  string feature_name = 2;
 }
 
 message FrameReady {
