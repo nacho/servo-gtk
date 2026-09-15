@@ -8,6 +8,17 @@ A GTK4 library that embeds the Servo web engine.
 - Servo web engine integration
 - OpenGL-accelerated rendering
 - Async event handling
+- HiDPI rendering at device resolution (correct `window.devicePixelRatio`)
+- Page zoom (`zoom-level` property; Ctrl+/Ctrl- style)
+- Navigation: `load_url`, `load_html`, reload, back/forward
+- Observable `uri`, `title`, `is-loading` properties and a `load-changed` signal
+- Full keyboard mapping, including function keys and Insert
+- User script/style injection and a page-to-native message channel
+- Script dialogs (`alert`, `confirm`, `prompt`) with native GTK dialogs
+- `<input type=file>` backed by a native file chooser
+- HTTP authentication and permission prompts
+- Popups (`window.open` / `target=_blank`) via a `create-web-view` signal
+- Native context menus on web content
 
 ## Building
 
