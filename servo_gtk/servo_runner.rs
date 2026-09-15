@@ -364,6 +364,14 @@ impl ServoRunner {
         });
     }
 
+    pub fn set_zoom_level(&self, level: f64) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::SetZoomLevel(
+                crate::proto_ipc::SetZoomLevel { level },
+            )),
+        });
+    }
+
     pub fn handle_log_message(&self, level: LogLevel, message: &str) {
         match level {
             LogLevel::Debug => debug!("{}", message),
