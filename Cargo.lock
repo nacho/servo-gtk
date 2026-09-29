@@ -2398,6 +2398,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "glib-build-tools"
+version = "0.22.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9871f38b67853c358b8190f77b9f878eb27d933a950f1045b244c4559a9f5f0"
+
+[[package]]
 name = "glib-macros"
 version = "0.22.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5911,7 +5917,6 @@ dependencies = [
  "servo-config",
  "servo-constellation",
  "servo-constellation-traits",
- "servo-default-resources",
  "servo-devtools",
  "servo-devtools-traits",
  "servo-embedder-traits",
@@ -6157,14 +6162,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "servo-default-resources"
-version = "0.5.0"
-source = "git+https://github.com/servo/servo.git?rev=1d44e5dd6a8b64c02f9dbf7fcbdf4ebdd0740019#1d44e5dd6a8b64c02f9dbf7fcbdf4ebdd0740019"
-dependencies = [
- "servo-embedder-traits",
-]
-
-[[package]]
 name = "servo-deny-public-fields"
 version = "0.5.0"
 source = "git+https://github.com/servo/servo.git?rev=1d44e5dd6a8b64c02f9dbf7fcbdf4ebdd0740019#1d44e5dd6a8b64c02f9dbf7fcbdf4ebdd0740019"
@@ -6388,6 +6385,7 @@ dependencies = [
  "gio",
  "gl",
  "glib",
+ "glib-build-tools",
  "gtk4",
  "image",
  "keyboard-types",

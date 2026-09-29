@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/com/servo-gtk">
+    <file>debugger.js</file>
+    <file>rippy.png</file>
+    <file>public_domains.txt</file>
+    <file>hsts_preload.fstmap</file>
+  </gresource>
+</gresources>
