@@ -85,7 +85,7 @@ mod imp {
 
     #[glib::object_subclass]
     impl ObjectSubclass for WebView {
-        const NAME: &'static str = "WebView";
+        const NAME: &'static str = "ServoGtkWebView";
         type Type = super::WebView;
         type ParentType = gtk::Widget;
     }
