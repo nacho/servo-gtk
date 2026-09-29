@@ -851,6 +851,11 @@ pub fn run() {
         config_dir: Some(config_dir),
         ..Default::default()
     };
+
+    // Servo requires a resource reader before the constellation starts. Ensure
+    // ours is registered (and its GResource bundle available) first.
+    crate::resource_reader::ensure_registered();
+
     let servo_builder = ServoBuilder::default().opts(opts);
     let servo = servo_builder.build();
 

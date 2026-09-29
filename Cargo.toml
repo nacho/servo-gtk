@@ -6,6 +6,10 @@ edition = "2024"
 [lib]
 name = "servo_gtk"
 path = "servo_gtk/lib.rs"
+# `rlib` keeps the crate usable by Rust consumers and the in-repo examples;
+# `staticlib` produces `libservo_gtk.a`, the artifact the Meson C-API build
+# links whole into `libservo-gtk.so`.
+crate-type = ["rlib", "staticlib"]
 
 [[example]]
 name = "browser"
@@ -19,7 +23,7 @@ path = "examples/user_content.rs"
 gio = "0.22"
 glib = { version = "0.22", features = ["v2_74", "log_macros"] }
 gtk = { package="gtk4", version="0.11", features=["v4_12"] }
-servo = { git = "https://github.com/servo/servo.git", rev = "1d44e5dd6a8b64c02f9dbf7fcbdf4ebdd0740019" }
+servo = { git = "https://github.com/servo/servo.git", rev = "1d44e5dd6a8b64c02f9dbf7fcbdf4ebdd0740019", default-features = false, features = ["bundled_freetype", "clipboard", "js_jit"] }
 servo-embedder-traits = { git = "https://github.com/servo/servo.git", rev = "1d44e5dd6a8b64c02f9dbf7fcbdf4ebdd0740019" }
 surfman = { version = "0.9", features = ["chains", "sm-angle", "sm-angle-default"] }
 gl = "0.14.0"
@@ -39,6 +43,7 @@ serde_json = "1"
 
 [build-dependencies]
 prost-build = "0.13"
+glib-build-tools = "0.22"
 
 # Use a fork of epoxy that fixes the build; the upstream 0.1.0 crate blocks `cargo update`.
 [patch.crates-io]
