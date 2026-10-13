@@ -528,10 +528,18 @@ impl ServoRunner {
 
     pub fn handle_log_message(&self, level: LogLevel, message: &str) {
         match level {
-            LogLevel::Debug => debug!("{}", message),
-            LogLevel::Info => info!("{}", message),
-            LogLevel::Warn => warn!("{}", message),
-            LogLevel::Error => error!("{}", message),
+            LogLevel::Debug => {
+                debug!("{}", message);
+            }
+            LogLevel::Info => {
+                info!("{}", message);
+            }
+            LogLevel::Warn => {
+                warn!("{}", message);
+            }
+            LogLevel::Error => {
+                error!("{}", message);
+            }
         }
     }
 }
