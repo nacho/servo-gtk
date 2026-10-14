@@ -35,11 +35,11 @@ async-channel = "2.5.0"
 log = "0.4.0"
 image = "0.25"
 keyboard-types = "0.8"
-prost = "0.13"
+prost = "0.14"
 serde_json = "1"
 
 [build-dependencies]
-prost-build = "0.13"
+prost-build = "0.14"
 glib-build-tools = "0.22"
 
 # Use a fork of epoxy that fixes the build; the upstream 0.1.0 crate blocks `cargo update`.
