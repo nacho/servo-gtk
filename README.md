@@ -1,24 +1,55 @@
-# Servo GTK
+# servo-gtk (Kestrel fork)
 
-A GTK4 library that embeds the Servo web engine.
+A GTK4 library that embeds the Servo web engine — **fork of
+[nacho/servo-gtk](https://github.com/nacho/servo-gtk) with content-blocking support
+for the [Kestrel browser](https://github.com/LocShadowVN/kestrel-browser)**.
 
-## Features
+[![Upstream](https://img.shields.io/badge/upstream-nacho%2Fservo--gtk-blue.svg?style=flat-square)](https://github.com/nacho/servo-gtk)
+[![License](https://img.shields.io/badge/license-MPL--2.0-blue.svg?style=flat-square)](LICENSE)
+[![Fork for](https://img.shields.io/badge/fork%20for-Kestrel%20browser-orange.svg?style=flat-square)](https://github.com/LocShadowVN/kestrel-browser)
 
-- GTK4-based web browser widget
-- Servo web engine integration
-- OpenGL-accelerated rendering
-- Async event handling
-- HiDPI rendering at device resolution (correct `window.devicePixelRatio`)
-- Page zoom (`zoom-level` property; Ctrl+/Ctrl- style)
-- Navigation: `load_url`, `load_html`, reload, back/forward
-- Observable `uri`, `title`, `is-loading` properties and a `load-changed` signal
-- Full keyboard mapping, including function keys and Insert
-- User script/style injection and a page-to-native message channel
-- Script dialogs (`alert`, `confirm`, `prompt`) with native GTK dialogs
-- `<input type=file>` backed by a native file chooser
-- HTTP authentication and permission prompts
-- Popups (`window.open` / `target=_blank`) via a `create-web-view` signal
-- Native context menus on web content
+---
+
+> **This is a fork.** The canonical project lives at
+> [nacho/servo-gtk](https://github.com/nacho/servo-gtk). This fork exists only
+> to add features needed by Kestrel. If you are not building Kestrel, use
+> upstream.
+
+---
+
+## About this fork
+
+`servo-gtk` embeds the [Servo](https://servo.org) web engine into a GTK4
+widget. This fork adds a **network-level content-blocking hook** on top of the
+upstream API, so an embedder can inspect and cancel resource requests before
+they are dispatched by Servo.
+
+Everything else — the GTK4 widget, input handling, HiDPI rendering, script
+dialogs, file chooser, HTTP auth, permissions, context menus, popups, user
+content injection, the Meson build, and the GObject-Introspection bindings —
+is unchanged from upstream.
+
+## What this fork adds
+
+- **`AdblockState`** — wrapper around [`adblock-rust`](https://github.com/brave/adblock-rust),
+  Brave's filter engine. Loads EasyList-format rules, checks requests, and
+  runs entirely inside the Servo runner subprocess (no IPC round-trip per
+  request).
+- **`WebViewDelegate::load_web_resource`** hook — inspects every resource
+  request. Main-frame navigations are never blocked; only subresources
+  (scripts, images, stylesheets, fonts, media, XHR, ...) can be cancelled.
+- **New GTK signals and methods on `WebView`**:
+  - `WebView::update_adblock_rules(action, rules)`
+  - `WebView::set_adblock_level(level)` — `0 = Off`, `1 = Standard`, `2 = Aggressive`
+  - `WebView::set_adblock_blob(blob)` — fast path, deserializes a pre-built engine
+  - `WebView::connect_adblock_blocked(|wv, url, resource_type|)` — fired for
+    each blocked resource, useful for a badge counter
+- **New IPC messages** in `proto/ipc.proto`:
+  `AdblockRulesUpdate`, `SetAdblockLevel`, `SetAdblockBlob`, `AdblockBlocked`,
+  `AdblockLevel`.
+
+The adblock engine lives in the runner subprocess alongside Servo, so per-request
+checks are a plain function call rather than an IPC round-trip.
 
 ## Building
 
@@ -26,37 +57,53 @@ A GTK4 library that embeds the Servo web engine.
 cargo build
 ```
 
-## Running the Example
+## Running the example
 
 ```bash
 cargo run --example browser
 ```
 
-## Using as a Library
+## Using as a library
 
 Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-servo-gtk = { path = "path/to/servo-gtk" }
+servo-gtk = { git = "https://github.com/LocShadowVN/servo-gtk.git", rev = "<commit>" }
 ```
 
-Then use in your code. You **must** call `run_as_runner_if_requested()` as the
-very first thing in `main()`. The library runs Servo in a subprocess by
-re-executing your own binary; this call hands off to the Servo runner when the
-process was spawned as one, and returns immediately otherwise. No separate
-binary needs to be installed.
+Then, at the very top of `main()`:
 
 ```rust
-use servo_gtk::WebView;
-
 fn main() {
     servo_gtk::run_as_runner_if_requested();
 
     // ... your normal application startup ...
-    let webview = WebView::new();
-    webview.load_url("https://example.com");
 }
+```
+
+Loading ad-block rules and switching level:
+
+```rust
+let rules: Vec<String> = std::fs::read_to_string("easylist.txt")?
+    .lines()
+    .map(String::from)
+    .collect();
+
+webview.update_adblock_rules("load", rules);
+webview.set_adblock_level(1); // Standard
+
+webview.connect_adblock_blocked(|_wv, url, resource_type| {
+    println!("blocked: {url} ({resource_type})");
+});
+```
+
+Or, for faster startup, build the engine once and ship a pre-serialized blob:
+
+```rust
+let engine = adblock::Engine::from_rules(&rules, Default::default());
+let blob = engine.serialize_raw()?;
+webview.set_adblock_blob(blob);
 ```
 
 ## Using from C and other languages (GObject Introspection)
@@ -126,11 +173,23 @@ view.load_url("https://example.com")
 > metadata still loads correctly, and C consumers that link the library at
 > startup are unaffected.
 
-## Dependencies
+## Requirements
 
 - GTK4
 - OpenGL
 - Servo web engine
 - Rust toolchain
+- `protobuf-compiler` (for `prost-build`)
 - For the C library / introspection: Meson, pkg-config, and
   `gobject-introspection` (`g-ir-scanner`)
+
+## Credits
+
+Upstream `servo-gtk` is written and maintained by
+[Ignacio Casal Quinteiro (nacho)](https://github.com/nacho). The adblock
+integration in this fork is a downstream addition; bugs in the adblock layer
+should be reported here, bugs in the base widget should be reported upstream.
+
+## License
+
+Mozilla Public License 2.0, same as upstream. See [LICENSE](LICENSE).

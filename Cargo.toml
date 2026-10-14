@@ -20,6 +20,9 @@ name = "user_content"
 path = "examples/user_content.rs"
 
 [dependencies]
+adblock = "0.9"
+http = "1"
+rmp = "=0.8.9"
 gio = "0.22"
 glib = { version = "0.22", features = ["v2_74", "log_macros"] }
 gtk = { package="gtk4", version="0.11", features=["v4_12"] }

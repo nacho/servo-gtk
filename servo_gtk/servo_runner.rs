@@ -46,11 +46,6 @@ impl ServoRunner {
         let launcher =
             SubprocessLauncher::new(SubprocessFlags::STDIN_PIPE | SubprocessFlags::STDOUT_PIPE);
 
-        // Re-execute this same executable with a marker argument so it starts
-        // as the Servo runner subprocess. The consuming application is
-        // responsible for calling `servo_gtk::run_as_runner_if_requested()` at
-        // the start of `main()` to dispatch to the runner. This removes any
-        // need to install a separate binary or invoke `cargo`.
         let current_exe = std::env::current_exe().expect("Failed to get current executable path");
         let subprocess = launcher
             .spawn(&[
@@ -64,11 +59,6 @@ impl ServoRunner {
 
         let (event_sender, event_receiver) = async_channel::unbounded();
 
-        // Single writer task: frames are drained from this channel and written
-        // to the subprocess stdin one at a time, in order. Spawning a separate
-        // write future per action (as before) let concurrent writes interleave
-        // and corrupt the length-prefixed frame stream, which could silently
-        // drop actions such as resize.
         let (frame_sender, frame_receiver) = async_channel::unbounded::<Vec<u8>>();
         glib::spawn_future_local(glib::clone!(
             #[strong]
@@ -86,13 +76,11 @@ impl ServoRunner {
             }
         ));
 
-        // Async task to receive events from process
         glib::spawn_future_local(glib::clone!(
             #[strong]
             stdout,
             async move {
                 loop {
-                    // Read 4-byte length prefix
                     let len_buf = vec![0u8; 4];
                     match stdout
                         .read_all_future(len_buf, glib::Priority::DEFAULT)
@@ -103,7 +91,6 @@ impl ServoRunner {
                                 len_buf[0], len_buf[1], len_buf[2], len_buf[3],
                             ]) as usize;
 
-                            // Read message data
                             let msg_buf = vec![0u8; len];
                             match stdout
                                 .read_all_future(msg_buf, glib::Priority::DEFAULT)
@@ -133,9 +120,6 @@ impl ServoRunner {
     }
 
     fn send_action(&self, action: ServoAction) {
-        // Encode into a length-prefixed frame and hand it to the single writer
-        // task, which writes frames sequentially. Ordering is preserved and
-        // frames never interleave.
         let len = action.encoded_len();
         let mut framed = Vec::with_capacity(4 + len);
         framed.extend_from_slice(&(len as u32).to_le_bytes());
@@ -407,22 +391,40 @@ impl ServoRunner {
         });
     }
 
-    /// Start a request/response round trip that exercises the bidirectional
-    /// IPC channel end to end. The runner replies with a `PingRequest` event,
-    /// which the [`WebView`](crate::WebView) answers via
-    /// [`send_ping_response`](Self::send_ping_response).
+    pub fn update_adblock_rules(&self, action: &str, rules: Vec<String>) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::UpdateAdblockRules(
+                crate::proto_ipc::AdblockRulesUpdate {
+                    action: action.to_string(),
+                    rules,
+                },
+            )),
+        });
+    }
+
+    pub fn set_adblock_level(&self, level: i32) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::SetAdblockLevel(
+                crate::proto_ipc::SetAdblockLevel { level },
+            )),
+        });
+    }
+
+    /// Gửi blob adblock đã serialize xuống runner subprocess.
+    pub fn set_adblock_blob(&self, blob: Vec<u8>) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::SetAdblockBlob(
+                crate::proto_ipc::SetAdblockBlob { blob },
+            )),
+        });
+    }
+
     pub fn ping(&self) {
         self.send_action(ServoAction {
             action: Some(servo_action::Action::Ping(crate::proto_ipc::Ping {})),
         });
     }
 
-    /// Answer a runner request identified by `request_id` with a ping payload.
-    ///
-    /// This is the return path of the bidirectional channel: the runner
-    /// correlates the response to the pending request it stashed under the same
-    /// id. Real delegate features add their own typed `send_*_response`
-    /// helpers alongside this one.
     pub fn send_ping_response(&self, request_id: u64, ok: bool) {
         self.send_action(ServoAction {
             action: Some(servo_action::Action::Response(
@@ -436,9 +438,6 @@ impl ServoRunner {
         });
     }
 
-    /// Answer a script dialog request (alert/confirm/prompt) identified by
-    /// `request_id`. `confirmed` is whether the user accepted; `value` is the
-    /// prompt text (ignored for alert/confirm).
     pub fn send_script_dialog_response(&self, request_id: u64, confirmed: bool, value: &str) {
         self.send_action(ServoAction {
             action: Some(servo_action::Action::Response(
@@ -455,8 +454,6 @@ impl ServoRunner {
         });
     }
 
-    /// Answer a file chooser request identified by `request_id` with the
-    /// selected `paths`. An empty list means the user cancelled.
     pub fn send_file_chooser_response(&self, request_id: u64, paths: Vec<String>) {
         self.send_action(ServoAction {
             action: Some(servo_action::Action::Response(
@@ -470,9 +467,6 @@ impl ServoRunner {
         });
     }
 
-    /// Answer an HTTP authentication request identified by `request_id`. When
-    /// `confirmed` is false the challenge is cancelled and the credentials are
-    /// ignored.
     pub fn send_auth_response(
         &self,
         request_id: u64,
@@ -496,7 +490,6 @@ impl ServoRunner {
         });
     }
 
-    /// Answer a permission request identified by `request_id`.
     pub fn send_permission_response(&self, request_id: u64, allow: bool) {
         self.send_action(ServoAction {
             action: Some(servo_action::Action::Response(
@@ -510,9 +503,6 @@ impl ServoRunner {
         });
     }
 
-    /// Answer a context menu request identified by `request_id`. When
-    /// `selected` is true, `index` is the chosen entry's index; otherwise the
-    /// menu was dismissed.
     pub fn send_context_menu_response(&self, request_id: u64, selected: bool, index: u32) {
         self.send_action(ServoAction {
             action: Some(servo_action::Action::Response(
