@@ -5680,7 +5680,6 @@ dependencies = [
  "serde_json",
  "servo",
  "servo-embedder-traits",
- "surfman",
  "url",
 ]
 
