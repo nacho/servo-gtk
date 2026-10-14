@@ -961,10 +961,10 @@ pub fn run() {
                         button_press.y
                     );
                     let mouse_button = match button_press.button {
-                        1 => MouseButton::Left,
-                        2 => MouseButton::Middle,
-                        3 => MouseButton::Right,
-                        _ => MouseButton::Left,
+                        1 => MouseButton::Primary,
+                        2 => MouseButton::Auxiliary,
+                        3 => MouseButton::Secondary,
+                        _ => MouseButton::Primary,
                     };
                     webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
                         MouseButtonAction::Down,
@@ -983,10 +983,10 @@ pub fn run() {
                         button_release.y
                     );
                     let mouse_button = match button_release.button {
-                        1 => MouseButton::Left,
-                        2 => MouseButton::Middle,
-                        3 => MouseButton::Right,
-                        _ => MouseButton::Left,
+                        1 => MouseButton::Primary,
+                        2 => MouseButton::Auxiliary,
+                        3 => MouseButton::Secondary,
+                        _ => MouseButton::Primary,
                     };
                     webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
                         MouseButtonAction::Up,

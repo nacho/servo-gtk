@@ -23,8 +23,8 @@ path = "examples/user_content.rs"
 gio = "0.22"
 glib = { version = "0.22", features = ["v2_74", "log_macros"] }
 gtk = { package="gtk4", version="0.11", features=["v4_12"] }
-servo = { git = "https://github.com/servo/servo.git", rev = "1d44e5dd6a8b64c02f9dbf7fcbdf4ebdd0740019", default-features = false, features = ["bundled_freetype", "clipboard", "js_jit"] }
-servo-embedder-traits = { git = "https://github.com/servo/servo.git", rev = "1d44e5dd6a8b64c02f9dbf7fcbdf4ebdd0740019" }
+servo = { git = "https://github.com/servo/servo.git", rev = "c78d2c206f80a1c8b67eefa97f773bba513205d3", default-features = false, features = ["bundled_freetype", "clipboard", "js_jit"] }
+servo-embedder-traits = { git = "https://github.com/servo/servo.git", rev = "c78d2c206f80a1c8b67eefa97f773bba513205d3" }
 surfman = { version = "0.9", features = ["chains", "sm-angle", "sm-angle-default"] }
 gl = "0.14.0"
 epoxy = "0.1.0"
