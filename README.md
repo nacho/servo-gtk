@@ -10,6 +10,8 @@ A GTK4 library that embeds the Servo web engine.
 - Async event handling
 - HiDPI rendering at device resolution (correct `window.devicePixelRatio`)
 - Page zoom (`zoom-level` property; Ctrl+/Ctrl- style)
+- Scrollbars: implements `GtkScrollable`, so it can be placed in a `GtkScrolledWindow`
+- Wheel and touchpad scrolling of whatever is under the pointer
 - Navigation: `load_url`, `load_html`, reload, back/forward
 - Observable `uri`, `title`, `is-loading` properties and a `load-changed` signal
 - Full keyboard mapping, including function keys and Insert

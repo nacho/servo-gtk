@@ -265,7 +265,11 @@ open_browser_window (GtkApplication *app,
   gtk_box_append (GTK_BOX (hbox), html_button);
   gtk_box_append (GTK_BOX (hbox), spinner);
   gtk_box_append (GTK_BOX (vbox), hbox);
-  gtk_box_append (GTK_BOX (vbox), web_view);
+  GtkWidget *scrolled_window = gtk_scrolled_window_new ();
+  gtk_widget_set_hexpand (scrolled_window, TRUE);
+  gtk_widget_set_vexpand (scrolled_window, TRUE);
+  gtk_scrolled_window_set_child (GTK_SCROLLED_WINDOW (scrolled_window), web_view);
+  gtk_box_append (GTK_BOX (vbox), scrolled_window);
 
   gtk_window_set_child (bw->window, vbox);
   gtk_window_present (bw->window);

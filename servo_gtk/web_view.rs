@@ -5,7 +5,7 @@
 use crate::key_tables::KeyTables;
 use crate::proto_ipc::{
     AuthRequest, ContextMenuRequest, FileChooserRequest, PermissionRequest, ScriptDialogKind,
-    ScriptDialogRequest, ServoEvent, servo_event,
+    ScriptDialogRequest, ScrollStateChanged, ServoEvent, servo_event,
 };
 use crate::servo_runner::{LogLevel, ServoRunner};
 use crate::user_content::UserContentManager;
@@ -33,6 +33,26 @@ fn logical_to_device(value: f64, scale: f64) -> f64 {
     value * if scale > 0.0 { scale } else { 1.0 }
 }
 
+/// The length, in logical pixels, of one scroll wheel step for a view of the
+/// given size along the scrolled axis.
+///
+/// This is the step `GtkScrolledWindow` uses, so the page scrolls like every
+/// other scrollable in the application: a fixed step would be too slow on a
+/// large view and too fast on a small one.
+fn wheel_step(size: f64) -> f64 {
+    size.max(1.0).powf(2.0 / 3.0)
+}
+
+/// The values to configure a scrollbar's `GtkAdjustment` with, for a scroller
+/// scrolled by `offset` whose content is `content` long and whose visible part
+/// is `viewport` long: `(value, lower, upper, step_increment, page_increment,
+/// page_size)`.
+fn adjustment_values(offset: f64, content: f64, viewport: f64) -> (f64, f64, f64, f64, f64, f64) {
+    let upper = content.max(viewport);
+    let value = offset.clamp(0.0, upper - viewport);
+    (value, 0.0, upper, viewport * 0.1, viewport * 0.9, viewport)
+}
+
 /// The state of a page load, delivered by the [`WebView::connect_load_changed`]
 /// signal.
 ///
@@ -54,7 +74,7 @@ pub enum LoadEvent {
 mod imp {
     use super::*;
 
-    #[derive(glib::Properties, Default)]
+    #[derive(glib::Properties)]
     #[properties(wrapper_type = super::WebView)]
     pub struct WebView {
         pub servo_runner: RefCell<Option<Rc<ServoRunner>>>,
@@ -81,6 +101,58 @@ mod imp {
         /// clamps and forwards the value to the runner.
         #[property(get, set = Self::set_zoom_level, name = "zoom-level", minimum = 0.1, maximum = 10.0, default = 1.0)]
         pub zoom_level: Cell<f64>,
+
+        /// The last pointer position over the view, in logical pixels. The
+        /// scroll controller does not report one, but Servo scrolls whatever is
+        /// under the given point.
+        pub pointer_position: Cell<(f64, f64)>,
+        /// The scroll state of the page's main scroller, as last reported by
+        /// the runner.
+        pub scroll_state: RefCell<Option<ScrollStateChanged>>,
+        /// Set while the adjustments are being updated from `scroll_state`, so
+        /// that their `value-changed` is not taken for the user moving a
+        /// scrollbar and echoed back to the page.
+        pub syncing_adjustments: Cell<bool>,
+
+        // GtkScrollable: implementing it is what lets the view be placed in a
+        // GtkScrolledWindow to get scrollbars. Servo does the scrolling itself,
+        // so the adjustments only mirror the page's scroll state, and moving
+        // them scrolls the page.
+        #[property(get, set = Self::set_hadjustment, override_interface = gtk::Scrollable)]
+        pub hadjustment: RefCell<Option<gtk::Adjustment>>,
+        pub hadjustment_handler: RefCell<Option<glib::SignalHandlerId>>,
+        #[property(get, set = Self::set_vadjustment, override_interface = gtk::Scrollable)]
+        pub vadjustment: RefCell<Option<gtk::Adjustment>>,
+        pub vadjustment_handler: RefCell<Option<glib::SignalHandlerId>>,
+        #[property(get, set, override_interface = gtk::Scrollable)]
+        pub hscroll_policy: Cell<gtk::ScrollablePolicy>,
+        #[property(get, set, override_interface = gtk::Scrollable)]
+        pub vscroll_policy: Cell<gtk::ScrollablePolicy>,
+    }
+
+    // Written out because `gtk::ScrollablePolicy` has no `Default`.
+    impl Default for WebView {
+        fn default() -> Self {
+            Self {
+                servo_runner: Default::default(),
+                memory_texture: Default::default(),
+                key_tables: Default::default(),
+                user_content_manager: Default::default(),
+                uri: Default::default(),
+                title: Default::default(),
+                is_loading: Default::default(),
+                zoom_level: Cell::new(1.0),
+                pointer_position: Default::default(),
+                scroll_state: Default::default(),
+                syncing_adjustments: Default::default(),
+                hadjustment: Default::default(),
+                hadjustment_handler: Default::default(),
+                vadjustment: Default::default(),
+                vadjustment_handler: Default::default(),
+                hscroll_policy: Cell::new(gtk::ScrollablePolicy::Minimum),
+                vscroll_policy: Cell::new(gtk::ScrollablePolicy::Minimum),
+            }
+        }
     }
 
     #[glib::object_subclass]
@@ -88,6 +160,7 @@ mod imp {
         const NAME: &'static str = "ServoGtkWebView";
         type Type = super::WebView;
         type ParentType = gtk::Widget;
+        type Interfaces = (gtk::Scrollable,);
     }
 
     impl WebView {
@@ -102,6 +175,45 @@ mod imp {
             if let Some(servo) = self.servo_runner.borrow().as_ref() {
                 servo.set_zoom_level(clamped);
             }
+        }
+
+        /// Property setter for the GtkScrollable `hadjustment`.
+        fn set_hadjustment(&self, adjustment: Option<gtk::Adjustment>) {
+            self.set_adjustment(&self.hadjustment, &self.hadjustment_handler, adjustment);
+        }
+
+        /// Property setter for the GtkScrollable `vadjustment`.
+        fn set_vadjustment(&self, adjustment: Option<gtk::Adjustment>) {
+            self.set_adjustment(&self.vadjustment, &self.vadjustment_handler, adjustment);
+        }
+
+        fn set_adjustment(
+            &self,
+            slot: &RefCell<Option<gtk::Adjustment>>,
+            handler: &RefCell<Option<glib::SignalHandlerId>>,
+            adjustment: Option<gtk::Adjustment>,
+        ) {
+            if *slot.borrow() == adjustment {
+                return;
+            }
+
+            if let (Some(old), Some(handler_id)) = (slot.take(), handler.take()) {
+                old.disconnect(handler_id);
+            }
+
+            if let Some(adjustment) = &adjustment {
+                let obj_weak = self.obj().downgrade();
+                let handler_id = adjustment.connect_value_changed(move |_| {
+                    if let Some(obj) = obj_weak.upgrade() {
+                        obj.on_adjustment_value_changed();
+                    }
+                });
+                handler.replace(Some(handler_id));
+            }
+            slot.replace(adjustment);
+
+            // A new adjustment starts out empty: show the current state at once.
+            self.obj().sync_adjustments();
         }
     }
 
@@ -153,6 +265,7 @@ mod imp {
             motion_controller.connect_motion(move |_, x, y| {
                 if let Some(obj) = obj_weak.upgrade() {
                     let imp = obj.imp();
+                    imp.pointer_position.set((x, y));
                     if let Some(servo) = imp.servo_runner.borrow().as_ref() {
                         let scale = obj.device_scale();
                         servo.motion(logical_to_device(x, scale), logical_to_device(y, scale));
@@ -239,14 +352,26 @@ mod imp {
             let scroll_controller =
                 gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
             let obj_weak = self.obj().downgrade();
-            scroll_controller.connect_scroll(move |_, delta_x, delta_y| {
+            scroll_controller.connect_scroll(move |controller, delta_x, delta_y| {
                 if let Some(obj) = obj_weak.upgrade() {
                     let imp = obj.imp();
                     if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+                        // Touchpad (surface) deltas are already in logical
+                        // pixels; wheel deltas count steps.
+                        let (delta_x, delta_y) = match controller.unit() {
+                            gdk::ScrollUnit::Wheel => (
+                                delta_x * wheel_step(gtk::prelude::WidgetExt::width(&obj) as f64),
+                                delta_y * wheel_step(gtk::prelude::WidgetExt::height(&obj) as f64),
+                            ),
+                            _ => (delta_x, delta_y),
+                        };
+                        let (x, y) = imp.pointer_position.get();
                         let scale = obj.device_scale();
                         servo.scroll(
                             logical_to_device(delta_x, scale),
                             logical_to_device(delta_y, scale),
+                            logical_to_device(x, scale),
+                            logical_to_device(y, scale),
                         );
                     }
                 }
@@ -305,6 +430,8 @@ mod imp {
         }
     }
 
+    impl ScrollableImpl for WebView {}
+
     impl WidgetImpl for WebView {
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
             if let Some(texture) = self.memory_texture.borrow().as_ref() {
@@ -341,7 +468,7 @@ mod imp {
 glib::wrapper! {
     pub struct WebView(ObjectSubclass<imp::WebView>)
         @extends gtk::Widget,
-        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
+        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget, gtk::Scrollable;
 }
 
 #[allow(clippy::new_without_default)]
@@ -1031,9 +1158,69 @@ impl WebView {
             servo_event::Event::CreateWebView(create) => {
                 self.emit_by_name::<()>("create-web-view", &[&create.url]);
             }
+            servo_event::Event::ScrollStateChanged(scroll_state) => {
+                glib::debug!("Scroll state changed: {scroll_state:?}");
+                self.imp().scroll_state.replace(Some(scroll_state));
+                self.sync_adjustments();
+            }
             servo_event::Event::ContextMenuRequest(request) => {
                 self.show_context_menu(request);
             }
+        }
+    }
+
+    /// Bring the scrollbar adjustments in line with the page's scroll state.
+    fn sync_adjustments(&self) {
+        let imp = self.imp();
+        let Some(state) = *imp.scroll_state.borrow() else {
+            return;
+        };
+        // Clone the adjustments out, so no borrow is held while they emit.
+        let hadjustment = imp.hadjustment.borrow().clone();
+        let vadjustment = imp.vadjustment.borrow().clone();
+
+        imp.syncing_adjustments.set(true);
+        if let Some(adjustment) = hadjustment {
+            configure_adjustment(
+                &adjustment,
+                state.offset_x,
+                state.content_width,
+                state.viewport_width,
+            );
+        }
+        if let Some(adjustment) = vadjustment {
+            configure_adjustment(
+                &adjustment,
+                state.offset_y,
+                state.content_height,
+                state.viewport_height,
+            );
+        }
+        imp.syncing_adjustments.set(false);
+    }
+
+    /// A scrollbar was moved: scroll the page to match.
+    fn on_adjustment_value_changed(&self) {
+        let imp = self.imp();
+        if imp.syncing_adjustments.get() {
+            return;
+        }
+        // Until the page reports its scroll state there is nothing to scroll.
+        let Some(state) = *imp.scroll_state.borrow() else {
+            return;
+        };
+        let x = imp
+            .hadjustment
+            .borrow()
+            .as_ref()
+            .map_or(state.offset_x, |adjustment| adjustment.value());
+        let y = imp
+            .vadjustment
+            .borrow()
+            .as_ref()
+            .map_or(state.offset_y, |adjustment| adjustment.value());
+        if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+            servo.scroll_to(x, y);
         }
     }
 
@@ -1070,9 +1257,55 @@ impl WebView {
     }
 }
 
+fn configure_adjustment(adjustment: &gtk::Adjustment, offset: f64, content: f64, viewport: f64) {
+    let (value, lower, upper, step_increment, page_increment, page_size) =
+        adjustment_values(offset, content, viewport);
+    adjustment.configure(
+        value,
+        lower,
+        upper,
+        step_increment,
+        page_increment,
+        page_size,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wheel_step_matches_gtk_scrolled_window() {
+        assert!((wheel_step(1000.0) - 100.0).abs() < 0.001);
+        assert!((wheel_step(500.0) - 62.996).abs() < 0.001);
+    }
+
+    #[test]
+    fn wheel_step_is_at_least_one() {
+        assert_eq!(wheel_step(0.0), 1.0);
+        assert_eq!(wheel_step(-10.0), 1.0);
+    }
+
+    #[test]
+    fn adjustment_values_cover_content_with_page_of_viewport() {
+        assert_eq!(
+            adjustment_values(1000.0, 3000.0, 500.0),
+            (1000.0, 0.0, 3000.0, 50.0, 450.0, 500.0)
+        );
+    }
+
+    #[test]
+    fn adjustment_values_never_smaller_than_viewport() {
+        // Content that fits leaves nothing to scroll, so no scrollbar shows.
+        let (value, _, upper, _, _, page_size) = adjustment_values(0.0, 300.0, 500.0);
+        assert_eq!((value, upper, page_size), (0.0, 500.0, 500.0));
+    }
+
+    #[test]
+    fn adjustment_values_clamp_offset_to_range() {
+        assert_eq!(adjustment_values(-5.0, 3000.0, 500.0).0, 0.0);
+        assert_eq!(adjustment_values(9000.0, 3000.0, 500.0).0, 2500.0);
+    }
 
     #[test]
     fn load_event_registers_glib_enum_type() {

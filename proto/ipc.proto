@@ -38,6 +38,7 @@ message ServoAction {
     // Initiate a request/response round trip for testing the channel end to
     // end. The runner replies with a PingRequest event.
     Ping ping = 28;
+    ScrollTo scroll_to = 29;
   }
 }
 
@@ -180,9 +181,20 @@ message KeyRelease {
   uint32 modifiers = 5;
 }
 
+// Scroll by (dx, dy) device pixels whatever scrolls at (x, y), the pointer
+// position in device pixels.
 message Scroll {
   double dx = 1;
   double dy = 2;
+  double x = 3;
+  double y = 4;
+}
+
+// Scroll the page's main scroller, the one described by ScrollStateChanged, to
+// the absolute offset (x, y) in CSS pixels. Sent when a scrollbar is moved.
+message ScrollTo {
+  double x = 1;
+  double y = 2;
 }
 
 message TouchBegin {
@@ -239,6 +251,9 @@ message ServoEvent {
     // A context menu on web content (e.g. right-click). The UI should present
     // the menu and reply with a ServoResponse carrying a ContextMenuResponse.
     ContextMenuRequest context_menu_request = 15;
+    // The scroll offset or extent of the page's main scroller changed. Drives
+    // the scrollbars of a GtkScrolledWindow the view is placed in.
+    ScrollStateChanged scroll_state_changed = 16;
   }
 }
 
@@ -301,6 +316,18 @@ message ContextMenuEntry {
   string label = 1;
   bool enabled = 2;
   bool separator = 3;
+}
+
+// The scroll state of the page's main scroller: usually the viewport, otherwise
+// a container covering most of it that the page scrolls instead (as PDF.js
+// does). All values are CSS pixels; content is never smaller than viewport.
+message ScrollStateChanged {
+  double offset_x = 1;
+  double offset_y = 2;
+  double content_width = 3;
+  double content_height = 4;
+  double viewport_width = 5;
+  double viewport_height = 6;
 }
 
 // A context menu to present on web content. `items` is ordered; the UI replies

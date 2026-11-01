@@ -395,12 +395,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
-name = "base64ct"
-version = "1.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
-
-[[package]]
 name = "bincode"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -796,12 +790,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cmov"
-version = "0.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
-
-[[package]]
 name = "cobs"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -990,12 +978,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cpubits"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15b85f9c39137c3a891689859392b1bd49812121d0d61c9caf00d46ed5ce06ae"
-
-[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1063,18 +1045,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
-name = "crypto-bigint"
-version = "0.7.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a52aa3fcda4e6302a9f48734f234d35d4721b96f8fe07d073f07ce9df4f0271"
-dependencies = [
- "cpubits",
- "ctutils",
- "num-traits",
- "rand_core 0.10.1",
-]
-
-[[package]]
 name = "crypto-common"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1115,15 +1085,6 @@ checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote",
  "syn 3.0.9",
-]
-
-[[package]]
-name = "ctutils"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03bb0e1cc970d482d121d9a1744999169b69a07470b3d644a7894e53fcaf4574"
-dependencies = [
- "cmov",
 ]
 
 [[package]]
@@ -1447,6 +1408,7 @@ checksum = "8e985e0451871ad22fb8d2b6b076e2028a502a0d3950998c2c5c0a4f9b5d9679"
 dependencies = [
  "cfg-if",
  "core_detect",
+ "multiversion",
  "multiversion_no_op",
  "rustversion",
  "scopeguard",
@@ -1637,6 +1599,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
 
 [[package]]
+name = "fft-convolver"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1dc2475d152b174858819508db05e86ae8df4542aeb1b2b21ef5a0dda3e64bf6"
+dependencies = [
+ "realfft",
+ "rtsan-standalone",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "field-offset"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1716,9 +1689,9 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "font-types"
-version = "0.12.6"
+version = "0.12.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c92d9081c7ab3bd83ef1eecdfad090f3d966e3ce74106779664114cfe1a6274"
+checksum = "835ae9d781464a79026cde387f9cbc650c9a4909d7cf7e658b127e3c35d2f35d"
 dependencies = [
  "bytemuck",
 ]
@@ -2403,6 +2376,8 @@ version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash 0.2.0",
 ]
 
@@ -3625,9 +3600,9 @@ dependencies = [
 
 [[package]]
 name = "mozjs"
-version = "0.26.4"
+version = "0.26.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f01469a5a27ea686861fdf9137ed5c8516c2eb2bc7a44b434d13d24464206e6"
+checksum = "b246cd4d322eb2d95c2b33b7e7a8c4c4a56a7cbd3b0a1e70218c9ea176a1beae"
 dependencies = [
  "bindgen",
  "cc",
@@ -3640,9 +3615,9 @@ dependencies = [
 
 [[package]]
 name = "mozjs_collator_glue"
-version = "153.3.0"
+version = "153.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6511ad98f083002dbf5fef43161bab40ee29cdb078c1f206da44a9e8d7068e93"
+checksum = "35033c6b0805271adbed9b50047bf07efb5e999c1a8a86753af79b742b02f8dd"
 dependencies = [
  "arraystring",
  "arrayvec",
@@ -3655,9 +3630,9 @@ dependencies = [
 
 [[package]]
 name = "mozjs_icu_collator"
-version = "153.3.0"
+version = "153.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e483fdb5592a4f52c2d0e3c419935acfb98a5b578154b93999b92dedbf170e0d"
+checksum = "00b76d0de5caa407560685c101a9823a58902008b3d9e6c062c4315c66917945"
 dependencies = [
  "displaydoc",
  "icu_locale",
@@ -3676,15 +3651,15 @@ dependencies = [
 
 [[package]]
 name = "mozjs_icu_collator_data"
-version = "153.3.0"
+version = "153.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b19ab440fab2f70cf54fc4c1f27eb3e96fc040e21fa824c126714ba50e4712ef"
+checksum = "905f380c3d72b517739a618d84d2d196a55fb0d8cdf76dd96f21d074650140ce"
 
 [[package]]
 name = "mozjs_icu_collections"
-version = "153.3.0"
+version = "153.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93e3aada8c51f5b8ba967c77c94694daaba66123377664dbe9991eb866550295"
+checksum = "04e3240b3156db0f1b0acda72cd79b53eebbbd032300519b450bc9be51648c2b"
 dependencies = [
  "displaydoc",
  "icu_casemap",
@@ -3697,9 +3672,9 @@ dependencies = [
 
 [[package]]
 name = "mozjs_icu_normalizer"
-version = "153.3.0"
+version = "153.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "362f589e9c5f836baade5fe90d587ffcab715c4e6bc01d6e2f266f939529876d"
+checksum = "f4c5c74ab2d167ca63b41b7e8b6fce2ecc047e8342a90208c422c73d6bc9a099"
 dependencies = [
  "displaydoc",
  "icu_properties",
@@ -3715,15 +3690,15 @@ dependencies = [
 
 [[package]]
 name = "mozjs_icu_normalizer_data"
-version = "153.3.0"
+version = "153.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72097863db07d41f443ccf464b1fe4a740362995f071e309b6d4bc81c46e42cc"
+checksum = "366ea39d07901d23c51a0b149bf332afa8c4dc84ab7619b2d899bfe01b3e3dbc"
 
 [[package]]
 name = "mozjs_locale_glue"
-version = "153.3.0"
+version = "153.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05df95cc420fc9ad69084ddc2a5eb65fd0a199330264ae53b2c4ae53921921da"
+checksum = "e239a7291a90e08c8d93a02fe54fb904e906d434859f762b7d1634f7f0152ad1"
 dependencies = [
  "cbindgen",
  "icu_locale",
@@ -3731,9 +3706,9 @@ dependencies = [
 
 [[package]]
 name = "mozjs_normalizer_glue"
-version = "153.3.0"
+version = "153.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8afbf5a615af0b6ef6d09b17ec7dd0d6633d63433e69ff6d3d3308dc5ba7c6e4"
+checksum = "a692f74e0255a0e0223e29f847ee8fd3a5bd846dbc64c6dd2cdb7b94435bf1eb"
 dependencies = [
  "cbindgen",
  "encoding_rs",
@@ -3744,9 +3719,9 @@ dependencies = [
 
 [[package]]
 name = "mozjs_properties_glue"
-version = "153.3.0"
+version = "153.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be7f9d646c1c150a90660180008b4c16625929c233627e62217980e451d13185"
+checksum = "e7e0d6dd3ea602e1c749f3c046e68d3cd84dfab0c1a5270bccba014259478d6e"
 dependencies = [
  "cbindgen",
  "icu_casemap",
@@ -3756,9 +3731,9 @@ dependencies = [
 
 [[package]]
 name = "mozjs_sys"
-version = "153.3.0-1"
+version = "153.6.0-1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6035f35313d2a0d9f983e43f3ac848ee60d140fd924e4a9a7c9405e32595c9d7"
+checksum = "199dc451e15dc64f4c879abccb1c9956504dfebdc9f2ab0ecded313d481c949a"
 dependencies = [
  "bindgen",
  "cc",
@@ -3779,9 +3754,9 @@ dependencies = [
 
 [[package]]
 name = "mozjs_unicode_bidi_ffi"
-version = "153.3.0"
+version = "153.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5dc1a975a659c188c30405253ad5f8aa69d5ec8025026a596d1815ae32a80534"
+checksum = "37b4e0d187cf9d048329996116e68172b99702ec6af6ad1e3a067d4cf8a89202"
 dependencies = [
  "cbindgen",
  "icu_properties",
@@ -3790,18 +3765,18 @@ dependencies = [
 
 [[package]]
 name = "mozjs_utf16_iter"
-version = "153.3.0"
+version = "153.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61d5e140da3b74d33316f5326e5ef551d45b6d7b4c4bdd5ed1aee9435cdbcf4d"
+checksum = "c0f5cccbc6429d442b3b7be04093b49509f188e514780a34ef3704f601e731be"
 dependencies = [
  "mozjs_icu_collections",
 ]
 
 [[package]]
 name = "mozjs_utf8_iter"
-version = "153.3.0"
+version = "153.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "587d6436f6eeef749e281d49cf401343707354c916e92505cd26ae2a0da9b638"
+checksum = "fd4ba02f48ea0cd8e2279a2d66e89dc367b4448561f4c6e44e75f85ac465099f"
 dependencies = [
  "mozjs_icu_collections",
 ]
@@ -3811,6 +3786,27 @@ name = "multimap"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
+
+[[package]]
+name = "multiversion"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18f07d0ab403c0c662001890da44da2500990d86e15788489cf9a94895f19e4e"
+dependencies = [
+ "multiversion-macros",
+]
+
+[[package]]
+name = "multiversion-macros"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e521b4032cf166c0d10a5d8598abd9858696612b9e2a4576ef97c7af4626bd6"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "rustversion",
+ "syn 3.0.9",
+]
 
 [[package]]
 name = "multiversion_no_op"
@@ -4722,6 +4718,15 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rand"
+version = "0.8.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e058c7de0b26af77780c769414d6257830bb240f3c38477dbc2c16e5f54d6d4c"
+dependencies = [
+ "rand_core 0.6.4",
+]
+
+[[package]]
+name = "rand"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41"
@@ -4750,6 +4755,12 @@ dependencies = [
  "ppv-lite86",
  "rand_core 0.9.5",
 ]
+
+[[package]]
+name = "rand_core"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 
 [[package]]
 name = "rand_core"
@@ -4864,13 +4875,16 @@ dependencies = [
 
 [[package]]
 name = "read-fonts"
-version = "0.43.3"
+version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "005c8acf251756c478b0bf402885bfd88a1476020c4c7e6060edc1aa68da38ea"
+checksum = "bdaa4fffe9ff3ca2c353fa9729792805b9b3e324695ff5a081f860612e81b330"
 dependencies = [
  "bytemuck",
+ "foldhash 0.2.0",
  "font-types",
  "once_cell",
+ "smallvec",
+ "yoke",
 ]
 
 [[package]]
@@ -5010,6 +5024,36 @@ checksum = "c51c9ae4df8a7fba42103df5c621fa3c37eccf3a3c650879e90fc48b11cc192c"
 dependencies = [
  "hashbrown 0.16.1",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "rtsan-standalone"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fd1b6d61d69481a68e555916d3a52213846f5c2d2140bdc74ebc308e2338fc3"
+dependencies = [
+ "rtsan-standalone-macros",
+ "rtsan-standalone-sys",
+]
+
+[[package]]
+name = "rtsan-standalone-macros"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8320af894782374141c8e0d4521ee613a8f24d7ab08b6ad359881311e37b9ef"
+dependencies = [
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "rtsan-standalone-sys"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "362a9c531f731e574a870cdb28ee7d81178ba7a87ed54380eb9b8d8f0c3b5301"
+dependencies = [
+ "num_cpus",
+ "tempfile",
 ]
 
 [[package]]
@@ -5275,12 +5319,12 @@ dependencies = [
 [[package]]
 name = "selectors"
 version = "0.41.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8322aebea94a6cc288ff884e8a49bdbceef60206c400c6c46d22e62fc4fd91a6"
+source = "git+https://github.com/servo/stylo?rev=890aa121c6aa930c1a3c52f307fd4ba5d9410068#890aa121c6aa930c1a3c52f307fd4ba5d9410068"
 dependencies = [
  "bitflags 2.13.2",
  "cssparser",
  "derive_more",
+ "hashbrown 0.17.1",
  "log",
  "new_debug_unreachable",
  "precomputed-hash",
@@ -5408,8 +5452,7 @@ dependencies = [
 
 [[package]]
 name = "servo"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "accesskit",
  "arboard",
@@ -5435,8 +5478,6 @@ dependencies = [
  "servo-config",
  "servo-constellation",
  "servo-constellation-traits",
- "servo-devtools",
- "servo-devtools-traits",
  "servo-embedder-traits",
  "servo-fonts",
  "servo-geometry",
@@ -5470,8 +5511,7 @@ dependencies = [
 
 [[package]]
 name = "servo-allocator"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -5479,8 +5519,7 @@ dependencies = [
 
 [[package]]
 name = "servo-background-hang-monitor"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "backtrace",
  "crossbeam-channel",
@@ -5494,8 +5533,7 @@ dependencies = [
 
 [[package]]
 name = "servo-background-hang-monitor-api"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "serde",
  "servo-base",
@@ -5503,8 +5541,7 @@ dependencies = [
 
 [[package]]
 name = "servo-base"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "accesskit",
  "crossbeam-channel",
@@ -5523,14 +5560,14 @@ dependencies = [
  "smallvec",
  "time",
  "unicode-segmentation",
+ "uuid",
  "webrender_api",
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "servo-canvas"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "bytemuck",
  "crossbeam-channel",
@@ -5555,8 +5592,7 @@ dependencies = [
 
 [[package]]
 name = "servo-canvas-traits"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "crossbeam-channel",
  "euclid",
@@ -5578,8 +5614,7 @@ dependencies = [
 
 [[package]]
 name = "servo-config"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "num_enum",
  "serde",
@@ -5591,8 +5626,7 @@ dependencies = [
 
 [[package]]
 name = "servo-config-macro"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5602,8 +5636,7 @@ dependencies = [
 
 [[package]]
 name = "servo-constellation"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "accesskit",
  "backtrace",
@@ -5626,7 +5659,6 @@ dependencies = [
  "servo-canvas-traits",
  "servo-config",
  "servo-constellation-traits",
- "servo-devtools-traits",
  "servo-embedder-traits",
  "servo-fonts",
  "servo-layout-api",
@@ -5646,8 +5678,7 @@ dependencies = [
 
 [[package]]
 name = "servo-constellation-traits"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "accesskit",
  "base64 0.23.1",
@@ -5662,7 +5693,6 @@ dependencies = [
  "servo-base",
  "servo-canvas-traits",
  "servo-config",
- "servo-devtools-traits",
  "servo-embedder-traits",
  "servo-fonts-traits",
  "servo-hyper-serde",
@@ -5681,8 +5711,7 @@ dependencies = [
 
 [[package]]
 name = "servo-deny-public-fields"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "proc-macro2",
  "syn 2.0.119",
@@ -5690,57 +5719,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "servo-devtools"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
-dependencies = [
- "atomic_refcell",
- "base64 0.23.1",
- "chrono",
- "crossbeam-channel",
- "headers",
- "http",
- "log",
- "malloc_size_of_derive",
- "parking_lot",
- "rand 0.10.3",
- "rustc-hash",
- "serde",
- "serde_json",
- "servo-base",
- "servo-config",
- "servo-devtools-traits",
- "servo-embedder-traits",
- "servo-malloc-size-of",
- "servo-net",
- "servo-net-traits",
- "servo-profile-traits",
- "servo-url",
- "uuid",
-]
-
-[[package]]
-name = "servo-devtools-traits"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
-dependencies = [
- "bytes",
- "http",
- "malloc_size_of_derive",
- "serde",
- "servo-base",
- "servo-embedder-traits",
- "servo-malloc-size-of",
- "servo-net-traits",
- "servo-profile-traits",
- "servo-url",
- "uuid",
-]
-
-[[package]]
 name = "servo-dom-struct"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "prettyplease",
  "proc-macro2",
@@ -5750,8 +5730,7 @@ dependencies = [
 
 [[package]]
 name = "servo-embedder-traits"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "accesskit",
  "bitflags 2.13.2",
@@ -5784,8 +5763,7 @@ dependencies = [
 
 [[package]]
 name = "servo-fonts"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "app_units",
  "atomic_refcell",
@@ -5813,7 +5791,7 @@ dependencies = [
  "ohos-deviceinfo",
  "parking_lot",
  "postcard",
- "read-fonts 0.43.3",
+ "read-fonts 0.46.0",
  "rustc-hash",
  "serde",
  "servo-allocator",
@@ -5827,7 +5805,7 @@ dependencies = [
  "servo-tracing",
  "servo-url",
  "servo_arc",
- "skrifa 0.46.2",
+ "skrifa 0.49.0",
  "smallvec",
  "stylo",
  "stylo_atoms",
@@ -5843,8 +5821,7 @@ dependencies = [
 
 [[package]]
 name = "servo-fonts-traits"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "atomic_refcell",
  "dwrote",
@@ -5854,7 +5831,7 @@ dependencies = [
  "num-derive",
  "num-traits",
  "parking_lot",
- "read-fonts 0.43.3",
+ "read-fonts 0.46.0",
  "serde",
  "servo-base",
  "servo-malloc-size-of",
@@ -5868,8 +5845,7 @@ dependencies = [
 
 [[package]]
 name = "servo-geometry"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "app_units",
  "euclid",
@@ -5906,8 +5882,7 @@ dependencies = [
 
 [[package]]
 name = "servo-hyper-serde"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "cookie 0.18.2",
  "headers",
@@ -5920,8 +5895,7 @@ dependencies = [
 
 [[package]]
 name = "servo-jstraceable-derive"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "proc-macro2",
  "syn 2.0.119",
@@ -5930,8 +5904,7 @@ dependencies = [
 
 [[package]]
 name = "servo-layout"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "accesskit",
  "app_units",
@@ -5939,7 +5912,9 @@ dependencies = [
  "atomic_refcell",
  "bitflags 2.13.2",
  "data-url",
+ "encoding_rs",
  "euclid",
+ "icu_casemap",
  "icu_locale_core",
  "icu_properties",
  "icu_segmenter",
@@ -5986,12 +5961,12 @@ dependencies = [
  "uuid",
  "web_atoms",
  "webrender_api",
+ "writeable",
 ]
 
 [[package]]
 name = "servo-layout-api"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "accesskit",
  "app_units",
@@ -6025,8 +6000,7 @@ dependencies = [
 
 [[package]]
 name = "servo-malloc-size-of"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "app_units",
  "atomic_refcell",
@@ -6037,6 +6011,7 @@ dependencies = [
  "data-url",
  "encoding_rs",
  "euclid",
+ "headers",
  "http",
  "icu_locale_core",
  "indexmap 2.14.2",
@@ -6048,7 +6023,9 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "resvg",
+ "serde_core",
  "servo-allocator",
+ "servo-hyper-serde",
  "servo_arc",
  "smallvec",
  "string_cache",
@@ -6072,8 +6049,7 @@ dependencies = [
 
 [[package]]
 name = "servo-media"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "servo-base",
  "servo-media-audio",
@@ -6085,15 +6061,16 @@ dependencies = [
 
 [[package]]
 name = "servo-media-audio"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "byte-slice-cast",
  "euclid",
+ "fft-convolver",
  "log",
  "malloc_size_of_derive",
  "num-complex",
  "num-traits",
+ "parking_lot",
  "petgraph",
  "realfft",
  "rustc-hash",
@@ -6110,8 +6087,7 @@ dependencies = [
 
 [[package]]
 name = "servo-media-derive"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6120,8 +6096,7 @@ dependencies = [
 
 [[package]]
 name = "servo-media-dummy"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "servo-base",
  "servo-media",
@@ -6134,8 +6109,7 @@ dependencies = [
 
 [[package]]
 name = "servo-media-ohos"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "crossbeam-channel",
  "libc",
@@ -6157,8 +6131,7 @@ dependencies = [
 
 [[package]]
 name = "servo-media-player"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "malloc_size_of_derive",
  "serde",
@@ -6170,8 +6143,7 @@ dependencies = [
 
 [[package]]
 name = "servo-media-streams"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "malloc_size_of_derive",
  "servo-malloc-size-of",
@@ -6180,8 +6152,7 @@ dependencies = [
 
 [[package]]
 name = "servo-media-thread"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "euclid",
  "ipc-channel",
@@ -6199,8 +6170,7 @@ dependencies = [
 
 [[package]]
 name = "servo-media-traits"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "malloc_size_of_derive",
  "servo-malloc-size-of",
@@ -6208,18 +6178,18 @@ dependencies = [
 
 [[package]]
 name = "servo-media-webrtc"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "log",
+ "malloc_size_of_derive",
+ "servo-malloc-size-of",
  "servo-media-streams",
  "uuid",
 ]
 
 [[package]]
 name = "servo-metrics"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "malloc_size_of_derive",
  "servo-base",
@@ -6233,8 +6203,7 @@ dependencies = [
 
 [[package]]
 name = "servo-net"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "async-compression",
  "async-recursion",
@@ -6281,7 +6250,6 @@ dependencies = [
  "serde",
  "servo-base",
  "servo-config",
- "servo-devtools-traits",
  "servo-embedder-traits",
  "servo-fonts",
  "servo-hyper-serde",
@@ -6310,8 +6278,7 @@ dependencies = [
 
 [[package]]
 name = "servo-net-traits"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "bytes",
  "content-security-policy",
@@ -6355,8 +6322,7 @@ dependencies = [
 
 [[package]]
 name = "servo-paint"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "bitflags 2.13.2",
  "crossbeam-channel",
@@ -6390,8 +6356,7 @@ dependencies = [
 
 [[package]]
 name = "servo-paint-api"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "bitflags 2.13.2",
  "crossbeam-channel",
@@ -6424,8 +6389,7 @@ dependencies = [
 
 [[package]]
 name = "servo-pixels"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "euclid",
  "image",
@@ -6439,8 +6403,7 @@ dependencies = [
 
 [[package]]
 name = "servo-profile"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "libc",
  "log",
@@ -6457,8 +6420,7 @@ dependencies = [
 
 [[package]]
 name = "servo-profile-traits"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "crossbeam-channel",
  "ipc-channel",
@@ -6473,17 +6435,14 @@ dependencies = [
 
 [[package]]
 name = "servo-script"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "accesskit",
  "app_units",
  "arrayvec",
  "atomic_refcell",
- "aws-lc-rs",
  "backtrace",
  "base64 0.23.1",
- "base64ct",
  "bitflags 2.13.2",
  "buf-read-ext",
  "bytes",
@@ -6492,13 +6451,13 @@ dependencies = [
  "content-security-policy",
  "cookie 0.18.2",
  "crossbeam-channel",
- "crypto-bigint",
  "cssparser",
  "data-url",
  "encoding_rs",
  "euclid",
  "flate2",
  "glow",
+ "hashlink",
  "headers",
  "html5ever",
  "http",
@@ -6535,7 +6494,6 @@ dependencies = [
  "servo-config",
  "servo-constellation-traits",
  "servo-deny-public-fields",
- "servo-devtools-traits",
  "servo-dom-struct",
  "servo-embedder-traits",
  "servo-fonts",
@@ -6554,6 +6512,7 @@ dependencies = [
  "servo-profile-traits",
  "servo-script-bindings",
  "servo-script-traits",
+ "servo-script-webcrypto",
  "servo-storage-traits",
  "servo-timers",
  "servo-tracing",
@@ -6585,8 +6544,7 @@ dependencies = [
 
 [[package]]
 name = "servo-script-bindings"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "atomic_refcell",
  "bitflags 2.13.2",
@@ -6619,18 +6577,20 @@ dependencies = [
  "servo-url",
  "servo_arc",
  "smallvec",
+ "string_cache",
  "strum",
  "stylo",
  "stylo_atoms",
+ "stylo_static_prefs",
  "tendril",
+ "web_atoms",
  "xml5ever",
  "zeroize",
 ]
 
 [[package]]
 name = "servo-script-traits"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "accesskit",
  "bitflags 2.13.2",
@@ -6644,7 +6604,6 @@ dependencies = [
  "servo-canvas-traits",
  "servo-config",
  "servo-constellation-traits",
- "servo-devtools-traits",
  "servo-embedder-traits",
  "servo-fonts-traits",
  "servo-malloc-size-of",
@@ -6663,9 +6622,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "servo-script-webcrypto"
+version = "0.8.0"
+dependencies = [
+ "malloc_size_of_derive",
+ "mozjs",
+ "rand 0.10.3",
+ "servo-deny-public-fields",
+ "servo-dom-struct",
+ "servo-jstraceable-derive",
+ "servo-malloc-size-of",
+ "servo-script-bindings",
+ "trait-set",
+ "uuid",
+]
+
+[[package]]
 name = "servo-storage"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "libc",
  "log",
@@ -6689,8 +6663,7 @@ dependencies = [
 
 [[package]]
 name = "servo-storage-traits"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "malloc_size_of_derive",
  "serde",
@@ -6703,8 +6676,7 @@ dependencies = [
 
 [[package]]
 name = "servo-timers"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "crossbeam-channel",
  "malloc_size_of_derive",
@@ -6713,8 +6685,7 @@ dependencies = [
 
 [[package]]
 name = "servo-tracing"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6723,8 +6694,7 @@ dependencies = [
 
 [[package]]
 name = "servo-url"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "encoding_rs",
  "malloc_size_of_derive",
@@ -6737,8 +6707,7 @@ dependencies = [
 
 [[package]]
 name = "servo-wakelock"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "serde",
  "servo-embedder-traits",
@@ -6746,8 +6715,7 @@ dependencies = [
 
 [[package]]
 name = "servo-webvtt"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "html5ever",
  "markup5ever",
@@ -6756,8 +6724,7 @@ dependencies = [
 
 [[package]]
 name = "servo-webxr-api"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "euclid",
  "ipc-channel",
@@ -6772,8 +6739,7 @@ dependencies = [
 
 [[package]]
 name = "servo-xpath"
-version = "0.7.0"
-source = "git+https://github.com/servo/servo.git?rev=aac43a3f31a259f04a574f5ec4e959c943ad7cc7#aac43a3f31a259f04a574f5ec4e959c943ad7cc7"
+version = "0.8.0"
 dependencies = [
  "log",
  "malloc_size_of_derive",
@@ -6784,8 +6750,7 @@ dependencies = [
 [[package]]
 name = "servo_arc"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4eceb519ec34d8290aaf6e46f435102f2bfa63f22b05a144fb16ab266d3b198"
+source = "git+https://github.com/servo/stylo?rev=890aa121c6aa930c1a3c52f307fd4ba5d9410068#890aa121c6aa930c1a3c52f307fd4ba5d9410068"
 dependencies = [
  "serde",
  "stable_deref_trait",
@@ -6910,12 +6875,15 @@ dependencies = [
 
 [[package]]
 name = "skrifa"
-version = "0.46.2"
+version = "0.49.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4febebda507fb889c545a37a135517769d1391941013561292897961d1887d6"
+checksum = "a7459fb60888ad9a5f367dd293fa2fb9df142cb451aa6bfd6cd66a7d6a9b739d"
 dependencies = [
  "bytemuck",
- "read-fonts 0.43.3",
+ "once_cell",
+ "read-fonts 0.46.0",
+ "smallvec",
+ "yoke",
 ]
 
 [[package]]
@@ -7067,8 +7035,7 @@ dependencies = [
 [[package]]
 name = "stylo"
 version = "0.22.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a255e46af2478628c48daab3774090caabd7812b1dd3ca98801c2b9c53491ed"
+source = "git+https://github.com/servo/stylo?rev=890aa121c6aa930c1a3c52f307fd4ba5d9410068#890aa121c6aa930c1a3c52f307fd4ba5d9410068"
 dependencies = [
  "app_units",
  "arrayvec",
@@ -7079,6 +7046,7 @@ dependencies = [
  "derive_more",
  "encoding_rs",
  "euclid",
+ "hashbrown 0.17.1",
  "icu_segmenter",
  "indexmap 2.14.2",
  "itertools 0.14.0",
@@ -7093,6 +7061,7 @@ dependencies = [
  "num_cpus",
  "parking_lot",
  "precomputed-hash",
+ "rand 0.8.8",
  "rayon",
  "rayon-core",
  "rustc-hash",
@@ -7124,8 +7093,7 @@ dependencies = [
 [[package]]
 name = "stylo_atoms"
 version = "0.22.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee1771588fd747ef16f8b1990061b6f37c7d3251a0f9b74f405a44c0c5fb8966"
+source = "git+https://github.com/servo/stylo?rev=890aa121c6aa930c1a3c52f307fd4ba5d9410068#890aa121c6aa930c1a3c52f307fd4ba5d9410068"
 dependencies = [
  "string_cache",
  "string_cache_codegen",
@@ -7134,8 +7102,7 @@ dependencies = [
 [[package]]
 name = "stylo_derive"
 version = "0.22.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ee5c550c2e00a0b3c046bef84a9ee217e04e7c014142eeb96f9e48781c5cfd3"
+source = "git+https://github.com/servo/stylo?rev=890aa121c6aa930c1a3c52f307fd4ba5d9410068#890aa121c6aa930c1a3c52f307fd4ba5d9410068"
 dependencies = [
  "darling 0.20.11",
  "proc-macro2",
@@ -7147,8 +7114,7 @@ dependencies = [
 [[package]]
 name = "stylo_dom"
 version = "0.22.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9febcb03f2b669ef06b3e8a5209e6280971ed55cecf83fbf3c0562fcf2aa2ec6"
+source = "git+https://github.com/servo/stylo?rev=890aa121c6aa930c1a3c52f307fd4ba5d9410068#890aa121c6aa930c1a3c52f307fd4ba5d9410068"
 dependencies = [
  "bitflags 2.13.2",
  "stylo_malloc_size_of",
@@ -7157,12 +7123,12 @@ dependencies = [
 [[package]]
 name = "stylo_malloc_size_of"
 version = "0.22.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83ed69d55ee907599f093221004a28371925236f09f20961963020abf38bab6a"
+source = "git+https://github.com/servo/stylo?rev=890aa121c6aa930c1a3c52f307fd4ba5d9410068#890aa121c6aa930c1a3c52f307fd4ba5d9410068"
 dependencies = [
  "app_units",
  "cssparser",
  "euclid",
+ "hashbrown 0.17.1",
  "parking_lot",
  "selectors",
  "servo_arc",
@@ -7176,8 +7142,7 @@ dependencies = [
 [[package]]
 name = "stylo_static_prefs"
 version = "0.22.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6767c48a1590461db79f8b434ccc5a2d65600a3b716751f7999b35ccead1e024"
+source = "git+https://github.com/servo/stylo?rev=890aa121c6aa930c1a3c52f307fd4ba5d9410068#890aa121c6aa930c1a3c52f307fd4ba5d9410068"
 dependencies = [
  "toml 1.1.8+spec-1.1.0",
 ]
@@ -7185,8 +7150,7 @@ dependencies = [
 [[package]]
 name = "stylo_traits"
 version = "0.22.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "645d6bfe40eb6e86ebe9f2d2adadcbced41bfa96175de7cb13d4d178d27bc83d"
+source = "git+https://github.com/servo/stylo?rev=890aa121c6aa930c1a3c52f307fd4ba5d9410068#890aa121c6aa930c1a3c52f307fd4ba5d9410068"
 dependencies = [
  "app_units",
  "bitflags 2.13.2",
@@ -7336,11 +7300,10 @@ dependencies = [
 
 [[package]]
 name = "taffy"
-version = "0.14.0"
+version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "639627c87f43b9181c811f40a6296409e093a17bc761214cba3c15df74f86b99"
+checksum = "31f7bd2d97198df05186f93a3a3c306845f40e8b3c22bf9279cdd7e5cf5fea7d"
 dependencies = [
- "arrayvec",
  "serde",
  "slotmap",
  "smallvec",
@@ -7391,6 +7354,9 @@ name = "thin-vec"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6a4b9ba8738cb4a4f399d37e266becfd475e75eb73425b87a05a2f2039ba63e"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "thiserror"
@@ -7533,10 +7499,10 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 [[package]]
 name = "to_shmem"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbf077da8dd01cc18453bd7d9bc3a945c262f5f344562e5f6deb3914b4dd6f14"
+source = "git+https://github.com/servo/stylo?rev=890aa121c6aa930c1a3c52f307fd4ba5d9410068#890aa121c6aa930c1a3c52f307fd4ba5d9410068"
 dependencies = [
  "cssparser",
+ "hashbrown 0.17.1",
  "servo_arc",
  "smallbitvec",
  "smallvec",
@@ -7547,8 +7513,7 @@ dependencies = [
 [[package]]
 name = "to_shmem_derive"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f8e91a023810fd2019648410d00eea13a71f21d849e71d6d9ed936fb8061174"
+source = "git+https://github.com/servo/stylo?rev=890aa121c6aa930c1a3c52f307fd4ba5d9410068#890aa121c6aa930c1a3c52f307fd4ba5d9410068"
 dependencies = [
  "darling 0.20.11",
  "proc-macro2",
@@ -7751,6 +7716,17 @@ name = "tracy-rs"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce607aae8ab0ab3abf3a2723a9ab6f09bb8639ed83fdd888d857b8e556c868d8"
+
+[[package]]
+name = "trait-set"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55442dd31337ec4b06189213a6a65cc414e4ae34e4cbc7bc050fae1573d14ed5"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
+]
 
 [[package]]
 name = "transpose"
@@ -8327,9 +8303,9 @@ dependencies = [
 
 [[package]]
 name = "webrender"
-version = "0.70.0"
+version = "0.70.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ede9dbc3cfb3e2c073a68e20f8fd54d9f6be8587be1c7c948e1ac51112421ef6"
+checksum = "b90e7e9f5be8b8e81a292dc5617bcb06661f5b110891499ff793ca55e364e0ca"
 dependencies = [
  "allocator-api2",
  "bincode",
@@ -8744,9 +8720,9 @@ dependencies = [
 
 [[package]]
 name = "wr_glyph_rasterizer"
-version = "0.70.0"
+version = "0.70.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bcda26d8788ba57a04cd75ae4a2c6da3aa8e5ab16ed1cfd5db09d0fbc04df2fb"
+checksum = "ab2dca02e2202d7472f6aa3ea67ef55bacd1aabdb71e2b0cd642b053a99545a9"
 dependencies = [
  "core-foundation 0.9.4",
  "core-graphics",
