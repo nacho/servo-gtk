@@ -7,6 +7,7 @@
 #[path = "ffi/lib.rs"]
 pub mod ffi;
 pub mod key_tables;
+pub mod metrics;
 pub mod proto_ipc;
 mod resource_reader;
 pub mod runner;

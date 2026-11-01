@@ -3,12 +3,16 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use crate::key_tables::KeyLocation;
+use crate::metrics;
 use async_channel;
 use gio::prelude::*;
 use gio::{Subprocess, SubprocessFlags, SubprocessLauncher};
 use glib::{debug, error, info, warn};
 use prost::Message;
+use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::ffi::OsStr;
+use std::time::{Duration, Instant};
 
 use crate::proto_ipc::{ServoAction, ServoEvent, servo_action};
 
@@ -34,9 +38,53 @@ impl From<i32> for LogLevel {
     }
 }
 
+/// Maximum number of stamped-but-unanswered input actions remembered.
+const MAX_PENDING_INPUTS: usize = 4096;
+
+/// Tracks stamped input actions awaiting a frame that reflects them.
+#[derive(Default)]
+struct InputTracker {
+    next_seq: u64,
+    pending: VecDeque<(u64, Instant)>,
+}
+
+impl InputTracker {
+    /// Allocate the next sequence number (starting at 1) and remember `now`.
+    fn stamp(&mut self, now: Instant) -> u64 {
+        self.next_seq += 1;
+        if self.pending.len() >= MAX_PENDING_INPUTS {
+            self.pending.pop_front();
+        }
+        self.pending.push_back((self.next_seq, now));
+        self.next_seq
+    }
+
+    /// Pop every entry with seq <= `seq`, returning the elapsed time of each
+    /// (oldest first).
+    fn complete(&mut self, seq: u64, now: Instant) -> Vec<Duration> {
+        let mut done = Vec::new();
+        while let Some(&(s, t)) = self.pending.front() {
+            if s > seq {
+                break;
+            }
+            self.pending.pop_front();
+            done.push(now.saturating_duration_since(t));
+        }
+        done
+    }
+}
+
+/// An encoded frame plus, when metrics are on, when it was queued.
+type QueuedFrame = (Vec<u8>, Option<Instant>);
+
+/// An event plus the monotonic receive time in microseconds (0 when metrics
+/// are disabled).
+pub type TimedEvent = (ServoEvent, i64);
+
 pub struct ServoRunner {
-    frame_sender: async_channel::Sender<Vec<u8>>,
-    event_receiver: async_channel::Receiver<ServoEvent>,
+    frame_sender: async_channel::Sender<QueuedFrame>,
+    event_receiver: async_channel::Receiver<TimedEvent>,
+    inputs: RefCell<InputTracker>,
     _subprocess: Subprocess,
 }
 
@@ -45,6 +93,11 @@ impl ServoRunner {
     pub fn new() -> Self {
         let launcher =
             SubprocessLauncher::new(SubprocessFlags::STDIN_PIPE | SubprocessFlags::STDOUT_PIPE);
+        if metrics::enabled() {
+            // Enable metrics in the child even when the UI turned them on
+            // programmatically rather than through the environment.
+            launcher.setenv(metrics::ENV_VAR, "1", true);
+        }
 
         // Re-execute this same executable with a marker argument so it starts
         // as the Servo runner subprocess. The consuming application is
@@ -69,12 +122,12 @@ impl ServoRunner {
         // write future per action (as before) let concurrent writes interleave
         // and corrupt the length-prefixed frame stream, which could silently
         // drop actions such as resize.
-        let (frame_sender, frame_receiver) = async_channel::unbounded::<Vec<u8>>();
+        let (frame_sender, frame_receiver) = async_channel::unbounded::<QueuedFrame>();
         glib::spawn_future_local(glib::clone!(
             #[strong]
             stdin,
             async move {
-                while let Ok(framed) = frame_receiver.recv().await {
+                while let Ok((framed, queued_at)) = frame_receiver.recv().await {
                     if stdin
                         .write_all_future(framed, glib::Priority::DEFAULT)
                         .await
@@ -82,6 +135,7 @@ impl ServoRunner {
                     {
                         break;
                     }
+                    metrics::stop("ui.ipc.action_queue_us", queued_at);
                 }
             }
         ));
@@ -105,13 +159,34 @@ impl ServoRunner {
 
                             // Read message data
                             let msg_buf = vec![0u8; len];
+                            let read_start = metrics::start();
                             match stdout
                                 .read_all_future(msg_buf, glib::Priority::DEFAULT)
                                 .await
                             {
                                 Ok((msg_buf, _, _)) => {
-                                    if let Ok(event) = ServoEvent::decode_from_slice(&msg_buf)
-                                        && event_sender.send(event).await.is_err()
+                                    metrics::stop("ui.ipc.read_body_us", read_start);
+                                    let recv_us = if metrics::enabled() {
+                                        metrics::monotonic_us()
+                                    } else {
+                                        0
+                                    };
+                                    let decode_start = metrics::start();
+                                    let decoded = ServoEvent::decode_from_slice(&msg_buf);
+                                    metrics::stop("ui.ipc.decode_us", decode_start);
+                                    if metrics::enabled() {
+                                        metrics::count("ui.ipc.events", 1);
+                                        if matches!(
+                                            decoded.as_ref().map(|e| &e.event),
+                                            Ok(Some(
+                                                crate::proto_ipc::servo_event::Event::FrameReady(_)
+                                            ))
+                                        ) {
+                                            metrics::record("ui.ipc.frame_bytes", len as u64);
+                                        }
+                                    }
+                                    if let Ok(event) = decoded
+                                        && event_sender.send((event, recv_us)).await.is_err()
                                     {
                                         break;
                                     }
@@ -128,11 +203,21 @@ impl ServoRunner {
         Self {
             frame_sender,
             event_receiver,
+            inputs: RefCell::new(InputTracker::default()),
             _subprocess: subprocess,
         }
     }
 
-    fn send_action(&self, action: ServoAction) {
+    fn send_action(&self, mut action: ServoAction) {
+        let queued_at = metrics::start();
+        if let Some(now) = queued_at {
+            metrics::count("ui.ipc.actions", 1);
+            if Self::is_input(&action) {
+                action.input_seq = self.inputs.borrow_mut().stamp(now);
+                metrics::count("ui.inputs", 1);
+            }
+        }
+
         // Encode into a length-prefixed frame and hand it to the single writer
         // task, which writes frames sequentially. Ordering is preserved and
         // frames never interleave.
@@ -145,12 +230,64 @@ impl ServoRunner {
 
         let sender = self.frame_sender.clone();
         glib::spawn_future_local(async move {
-            let _ = sender.send(framed).await;
+            let _ = sender.send((framed, queued_at)).await;
         });
     }
 
-    pub fn event_receiver(&self) -> async_channel::Receiver<ServoEvent> {
+    fn is_input(action: &ServoAction) -> bool {
+        use servo_action::Action::*;
+        matches!(
+            action.action,
+            Some(
+                Motion(_)
+                    | ButtonPress(_)
+                    | ButtonRelease(_)
+                    | KeyPress(_)
+                    | KeyRelease(_)
+                    | Scroll(_)
+                    | TouchBegin(_)
+                    | TouchUpdate(_)
+                    | TouchEnd(_)
+                    | TouchCancel(_)
+            )
+        )
+    }
+
+    /// Events from the runner, each with the monotonic receive time in
+    /// microseconds (0 when metrics are disabled).
+    pub fn event_receiver(&self) -> async_channel::Receiver<TimedEvent> {
         self.event_receiver.clone()
+    }
+
+    /// Record `ui.input.to_frame_us` for every stamped input with sequence
+    /// <= `seq`, now that a frame reflecting them has arrived.
+    pub fn complete_inputs_up_to(&self, seq: u64) {
+        if seq == 0 || !metrics::enabled() {
+            return;
+        }
+        let done = self.inputs.borrow_mut().complete(seq, Instant::now());
+        if let Some(oldest) = done.first() {
+            metrics::record_duration("ui.input.to_frame_oldest_us", *oldest);
+        }
+        for d in done {
+            metrics::record_duration("ui.input.to_frame_us", d);
+        }
+    }
+
+    /// Ask the runner to send a `MetricsReport`.
+    pub fn flush_metrics(&self) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::FlushMetrics(true)),
+            ..Default::default()
+        });
+    }
+
+    /// Clear runner-side metrics.
+    pub fn reset_metrics(&self) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::ResetMetrics(true)),
+            ..Default::default()
+        });
     }
 
     pub fn load_url(&self, url: &str) {
@@ -158,6 +295,7 @@ impl ServoRunner {
             action: Some(servo_action::Action::LoadUrl(crate::proto_ipc::LoadUrl {
                 url: url.to_string(),
             })),
+            ..Default::default()
         });
     }
 
@@ -167,24 +305,28 @@ impl ServoRunner {
                 html: html.to_string(),
                 base_url: base_url.unwrap_or_default().to_string(),
             })),
+            ..Default::default()
         });
     }
 
     pub fn reload(&self) {
         self.send_action(ServoAction {
             action: Some(servo_action::Action::Reload(true)),
+            ..Default::default()
         });
     }
 
     pub fn go_back(&self) {
         self.send_action(ServoAction {
             action: Some(servo_action::Action::GoBack(true)),
+            ..Default::default()
         });
     }
 
     pub fn go_forward(&self) {
         self.send_action(ServoAction {
             action: Some(servo_action::Action::GoForward(true)),
+            ..Default::default()
         });
     }
 
@@ -194,6 +336,7 @@ impl ServoRunner {
                 width,
                 height,
             })),
+            ..Default::default()
         });
     }
 
@@ -203,6 +346,7 @@ impl ServoRunner {
                 x,
                 y,
             })),
+            ..Default::default()
         });
     }
 
@@ -211,6 +355,7 @@ impl ServoRunner {
             action: Some(servo_action::Action::ButtonPress(
                 crate::proto_ipc::ButtonPress { button, x, y },
             )),
+            ..Default::default()
         });
     }
 
@@ -219,6 +364,7 @@ impl ServoRunner {
             action: Some(servo_action::Action::ButtonRelease(
                 crate::proto_ipc::ButtonRelease { button, x, y },
             )),
+            ..Default::default()
         });
     }
 
@@ -252,6 +398,7 @@ impl ServoRunner {
                 key_code,
                 modifiers,
             })),
+            ..Default::default()
         });
     }
 
@@ -278,6 +425,7 @@ impl ServoRunner {
                     modifiers,
                 },
             )),
+            ..Default::default()
         });
     }
 
@@ -287,6 +435,7 @@ impl ServoRunner {
                 dx,
                 dy,
             })),
+            ..Default::default()
         });
     }
 
@@ -295,6 +444,7 @@ impl ServoRunner {
             action: Some(servo_action::Action::TouchBegin(
                 crate::proto_ipc::TouchBegin { x, y },
             )),
+            ..Default::default()
         });
     }
 
@@ -303,6 +453,7 @@ impl ServoRunner {
             action: Some(servo_action::Action::TouchUpdate(
                 crate::proto_ipc::TouchUpdate { x, y },
             )),
+            ..Default::default()
         });
     }
 
@@ -312,6 +463,7 @@ impl ServoRunner {
                 x,
                 y,
             })),
+            ..Default::default()
         });
     }
 
@@ -320,12 +472,14 @@ impl ServoRunner {
             action: Some(servo_action::Action::TouchCancel(
                 crate::proto_ipc::TouchCancel { x, y },
             )),
+            ..Default::default()
         });
     }
 
     pub fn shutdown(&self) {
         self.send_action(ServoAction {
             action: Some(servo_action::Action::Shutdown(true)),
+            ..Default::default()
         });
     }
 
@@ -336,6 +490,7 @@ impl ServoRunner {
                     source: source.to_string(),
                 },
             )),
+            ..Default::default()
         });
     }
 
@@ -346,18 +501,21 @@ impl ServoRunner {
                     source: source.to_string(),
                 },
             )),
+            ..Default::default()
         });
     }
 
     pub fn remove_all_user_scripts(&self) {
         self.send_action(ServoAction {
             action: Some(servo_action::Action::RemoveAllUserScripts(true)),
+            ..Default::default()
         });
     }
 
     pub fn remove_all_user_style_sheets(&self) {
         self.send_action(ServoAction {
             action: Some(servo_action::Action::RemoveAllUserStyleSheets(true)),
+            ..Default::default()
         });
     }
 
@@ -368,6 +526,7 @@ impl ServoRunner {
                     name: name.to_string(),
                 },
             )),
+            ..Default::default()
         });
     }
 
@@ -378,6 +537,7 @@ impl ServoRunner {
                     name: name.to_string(),
                 },
             )),
+            ..Default::default()
         });
     }
 
@@ -388,6 +548,7 @@ impl ServoRunner {
                     source: source.to_string(),
                 },
             )),
+            ..Default::default()
         });
     }
 
@@ -396,6 +557,7 @@ impl ServoRunner {
             action: Some(servo_action::Action::SetZoomLevel(
                 crate::proto_ipc::SetZoomLevel { level },
             )),
+            ..Default::default()
         });
     }
 
@@ -404,6 +566,7 @@ impl ServoRunner {
             action: Some(servo_action::Action::SetHidpiScaleFactor(
                 crate::proto_ipc::SetHidpiScaleFactor { scale },
             )),
+            ..Default::default()
         });
     }
 
@@ -414,6 +577,7 @@ impl ServoRunner {
     pub fn ping(&self) {
         self.send_action(ServoAction {
             action: Some(servo_action::Action::Ping(crate::proto_ipc::Ping {})),
+            ..Default::default()
         });
     }
 
@@ -433,6 +597,7 @@ impl ServoRunner {
                     )),
                 },
             )),
+            ..Default::default()
         });
     }
 
@@ -452,6 +617,7 @@ impl ServoRunner {
                     )),
                 },
             )),
+            ..Default::default()
         });
     }
 
@@ -467,6 +633,7 @@ impl ServoRunner {
                     )),
                 },
             )),
+            ..Default::default()
         });
     }
 
@@ -493,6 +660,7 @@ impl ServoRunner {
                     )),
                 },
             )),
+            ..Default::default()
         });
     }
 
@@ -507,6 +675,7 @@ impl ServoRunner {
                     )),
                 },
             )),
+            ..Default::default()
         });
     }
 
@@ -523,6 +692,7 @@ impl ServoRunner {
                     )),
                 },
             )),
+            ..Default::default()
         });
     }
 
@@ -547,5 +717,36 @@ impl ServoRunner {
 impl Drop for ServoRunner {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn input_tracker_stamps_from_one_and_completes_in_order() {
+        let mut t = InputTracker::default();
+        let t0 = Instant::now();
+        assert_eq!(t.stamp(t0), 1);
+        assert_eq!(t.stamp(t0), 2);
+        assert_eq!(t.stamp(t0), 3);
+        let done = t.complete(2, t0 + Duration::from_millis(5));
+        assert_eq!(done.len(), 2);
+        assert_eq!(done[0], Duration::from_millis(5));
+        assert!(t.complete(2, t0).is_empty());
+        assert_eq!(t.complete(10, t0).len(), 1);
+    }
+
+    #[test]
+    fn input_tracker_caps_pending() {
+        let mut t = InputTracker::default();
+        let t0 = Instant::now();
+        for _ in 0..MAX_PENDING_INPUTS + 10 {
+            t.stamp(t0);
+        }
+        assert_eq!(t.pending.len(), MAX_PENDING_INPUTS);
+        assert_eq!(t.pending.front().unwrap().0, 11);
+        assert_eq!(t.complete(u64::MAX, t0).len(), MAX_PENDING_INPUTS);
     }
 }

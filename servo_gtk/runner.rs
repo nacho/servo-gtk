@@ -11,7 +11,7 @@
 //! process was spawned as a runner, control is handed off here and never
 //! returns to the normal application startup path.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::BorrowedFd;
@@ -40,12 +40,14 @@ use std::str::FromStr;
 use std::sync::mpsc;
 use std::sync::mpsc::Receiver;
 use std::thread;
+use std::time::Instant;
 use url::Url;
 
+use crate::metrics;
 use crate::proto_ipc::{
     CursorChanged, FileChooserRequest, FrameReady, LoadEnd, LoadStart, LogLevel, LogMessage,
-    PingRequest, ScriptDialogKind, ScriptDialogRequest, ScriptMessage, ServoAction, ServoEvent,
-    TitleChanged, UrlChanged, servo_action, servo_event,
+    MetricsReport, PingRequest, ScriptDialogKind, ScriptDialogRequest, ScriptMessage, ServoAction,
+    ServoEvent, TitleChanged, UrlChanged, servo_action, servo_event,
 };
 
 /// Prefix used by the injected script-message shim when forwarding a page
@@ -175,11 +177,17 @@ impl EventPipe {
 
     fn send(&self, event: ServoEvent) -> std::io::Result<()> {
         let encoded = event.encode_to_vec();
+        self.send_encoded(&encoded)
+    }
+
+    /// Write an already-encoded event with its length prefix. Split out from
+    /// [`EventPipe::send`] so frames can time encoding and writing separately.
+    fn send_encoded(&self, encoded: &[u8]) -> std::io::Result<()> {
         let len = (encoded.len() as u32).to_le_bytes();
 
         let mut file = &*self.file;
         file.write_all(&len)?;
-        file.write_all(&encoded)
+        file.write_all(encoded)
     }
 }
 
@@ -207,6 +215,11 @@ struct ServoWebViewDelegate {
     /// `CreateWebView` event so a real top-level window can host it, then drop
     /// the auxiliary view.
     popups: Rc<PopupState>,
+    /// Highest `ServoAction::input_seq` the runner loop has processed, echoed
+    /// in `FrameReady.input_seq` (only read when metrics are enabled).
+    input_seq: Rc<Cell<u64>>,
+    /// Start of the previous `notify_new_frame_ready`, for the interval metric.
+    last_frame_start: Cell<Option<Instant>>,
 }
 
 /// State tracking auxiliary popup WebViews and the id of the main one.
@@ -233,6 +246,7 @@ impl ServoWebViewDelegate {
         event_pipe: EventPipe,
         pending: &PendingState,
         popups: Rc<PopupState>,
+        input_seq: Rc<Cell<u64>>,
     ) -> Self {
         Self {
             rendering_context,
@@ -243,31 +257,74 @@ impl ServoWebViewDelegate {
             pending_permissions: pending.permissions.clone(),
             pending_context_menus: pending.context_menus.clone(),
             popups,
+            input_seq,
+            last_frame_start: Cell::new(None),
         }
     }
 }
 
 impl WebViewDelegate for ServoWebViewDelegate {
     fn notify_new_frame_ready(&self, webview: WebView) {
+        let metrics_on = metrics::enabled();
+        let total = metrics::start();
+        if let Some(now) = total
+            && let Some(prev) = self.last_frame_start.replace(Some(now))
+        {
+            metrics::record_duration("runner.frame.interval_us", now - prev);
+        }
+        let paint_start_us = if metrics_on {
+            metrics::monotonic_us()
+        } else {
+            0
+        };
+
         let size = self.rendering_context.size2d().to_i32();
         let viewport_rect = DeviceIntRect::from_origin_and_size(Point2D::origin(), size);
+        let t = metrics::start();
         webview.paint();
+        metrics::stop("runner.frame.paint_us", t);
+        let t = metrics::start();
         self.rendering_context.present();
+        metrics::stop("runner.frame.present_us", t);
 
-        if let Some(rgba_image) = self.rendering_context.read_to_image(viewport_rect) {
+        let t = metrics::start();
+        let image = self.rendering_context.read_to_image(viewport_rect);
+        metrics::stop("runner.frame.readback_us", t);
+        if let Some(rgba_image) = image {
             let width = rgba_image.width();
             let height = rgba_image.height();
             let data = rgba_image.into_raw();
 
+            // `send_start_us` is carried inside the message, so it must be
+            // stamped before encoding: the UI's measured transit time
+            // therefore includes the encode time as well as the pipe write.
+            let send_start_us = if metrics_on {
+                metrics::monotonic_us()
+            } else {
+                0
+            };
             let event = ServoEvent {
                 event: Some(servo_event::Event::FrameReady(FrameReady {
                     rgba_data: data,
                     width,
                     height,
+                    input_seq: if metrics_on { self.input_seq.get() } else { 0 },
+                    paint_start_us,
+                    send_start_us,
                 })),
             };
-            let _ = self.event_pipe.send(event);
+            let t = metrics::start();
+            let encoded = event.encode_to_vec();
+            metrics::stop("runner.frame.encode_us", t);
+            if metrics_on {
+                metrics::record("runner.frame.bytes", encoded.len() as u64);
+            }
+            let t = metrics::start();
+            let _ = self.event_pipe.send_encoded(&encoded);
+            metrics::stop("runner.frame.write_us", t);
+            metrics::count("runner.frames", 1);
         }
+        metrics::stop("runner.frame.total_us", total);
     }
 
     fn notify_cursor_changed(&self, _webview: servo::WebView, cursor: servo::Cursor) {
@@ -787,6 +844,22 @@ fn clamp_zoom_level(level: f64) -> f32 {
     level.clamp(MIN_ZOOM, MAX_ZOOM) as f32
 }
 
+/// Fold `action`'s input sequence number into the running maximum. Must be
+/// applied to every received action, before coalescing discards the wrapper.
+fn max_input_seq(current: u64, action: &ServoAction) -> u64 {
+    current.max(action.input_seq)
+}
+
+/// Send a `MetricsReport` event carrying this process's metrics snapshot.
+fn send_metrics_report(event_pipe: &EventPipe) {
+    let event = ServoEvent {
+        event: Some(servo_event::Event::MetricsReport(MetricsReport {
+            json: metrics::snapshot_json().to_string(),
+        })),
+    };
+    let _ = event_pipe.send(event);
+}
+
 /// Queue `action` for processing, merging it into the previous one when the
 /// intermediate states carry no information.
 fn push_coalesced_input(pending: &mut Vec<servo_action::Action>, action: ServoAction) {
@@ -864,6 +937,7 @@ pub fn run() {
     let user_content_manager = Rc::new(UserContentManager::new(&servo));
 
     let event_pipe = EventPipe::from_stdout();
+    let input_seq = Rc::new(Cell::new(0u64));
     let pending_state = PendingState::default();
     let popups = Rc::new(PopupState::default());
     let delegate = Rc::new(ServoWebViewDelegate::new(
@@ -871,6 +945,7 @@ pub fn run() {
         event_pipe.clone(),
         &pending_state,
         popups.clone(),
+        input_seq.clone(),
     ));
 
     let webview = WebViewBuilder::new(&servo, rendering_context)
@@ -891,8 +966,11 @@ pub fn run() {
     let receiver = spawn_stdin_channel();
 
     'event_loop: loop {
+        let iteration_start = metrics::start();
+
         // Process queued log messages
         while let Ok(log_message) = log_receiver.try_recv() {
+            metrics::count("runner.log_messages", 1);
             let event = ServoEvent {
                 event: Some(servo_event::Event::LogMessage(log_message)),
             };
@@ -901,15 +979,38 @@ pub fn run() {
 
         // Block briefly for input, then drain everything else already queued.
         let mut pending = Vec::new();
-        match receiver.recv_timeout(SPIN_INTERVAL) {
-            Ok(action) => push_coalesced_input(&mut pending, action),
+        let mut received = 0u64;
+        let mut max_seq = 0u64;
+        let wait = metrics::start();
+        let first = receiver.recv_timeout(SPIN_INTERVAL);
+        metrics::stop("runner.loop.wait_us", wait);
+        match first {
+            Ok(action) => {
+                received += 1;
+                max_seq = max_input_seq(max_seq, &action);
+                push_coalesced_input(&mut pending, action);
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
         while let Ok(action) = receiver.try_recv() {
+            received += 1;
+            max_seq = max_input_seq(max_seq, &action);
             push_coalesced_input(&mut pending, action);
         }
 
+        if metrics::enabled() {
+            metrics::count("runner.actions.received", received);
+            metrics::count(
+                "runner.actions.coalesced",
+                received.saturating_sub(pending.len() as u64),
+            );
+            if !pending.is_empty() {
+                metrics::record("runner.loop.actions_per_iter", pending.len() as u64);
+            }
+        }
+
+        let actions_start = metrics::start();
         for action_type in pending {
             match action_type {
                 servo_action::Action::LoadUrl(load_url) => {
@@ -1164,6 +1265,16 @@ pub fn run() {
                     };
                     let _ = event_pipe.send(event);
                 }
+                servo_action::Action::FlushMetrics(_) => {
+                    if metrics::enabled() {
+                        send_metrics_report(&event_pipe);
+                    }
+                }
+                servo_action::Action::ResetMetrics(_) => {
+                    if metrics::enabled() {
+                        metrics::reset();
+                    }
+                }
                 servo_action::Action::Response(response) => {
                     let request_id = response.request_id;
                     match response.payload {
@@ -1249,8 +1360,17 @@ pub fn run() {
             }
         }
 
+        metrics::stop("runner.loop.actions_us", actions_start);
+        // Only now are the drained inputs processed; frames painted during the
+        // spin below may echo this sequence number.
+        if max_seq > input_seq.get() {
+            input_seq.set(max_seq);
+        }
+
         // Spin servo event loop
+        let spin = metrics::start();
         servo.spin_event_loop();
+        metrics::stop("runner.loop.spin_us", spin);
 
         // Surface any auxiliary popup WebViews whose destination URL is now
         // known. We do not render them (single rendering context), so we hand
@@ -1277,12 +1397,35 @@ pub fn run() {
                 None => true,
             });
         }
+
+        metrics::stop("runner.loop.iteration_us", iteration_start);
+        metrics::count("runner.loop.iterations", 1);
+    }
+
+    // Best-effort final report on both the Shutdown and Disconnected exits.
+    if metrics::enabled() {
+        send_metrics_report(&event_pipe);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn max_input_seq_takes_highest_across_actions() {
+        let action = |input_seq| ServoAction {
+            action: None,
+            input_seq,
+        };
+        let mut max = 0;
+        for seq in [3, 0, 7, 5] {
+            max = max_input_seq(max, &action(seq));
+        }
+        assert_eq!(max, 7);
+        // Never goes backwards.
+        assert_eq!(max_input_seq(7, &action(2)), 7);
+    }
 
     #[test]
     fn load_status_started_maps_to_load_start() {

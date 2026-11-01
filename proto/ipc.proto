@@ -38,7 +38,17 @@ message ServoAction {
     // Initiate a request/response round trip for testing the channel end to
     // end. The runner replies with a PingRequest event.
     Ping ping = 28;
+    // Ask the runner to send a MetricsReport event with its current metrics
+    // snapshot. Ignored when metrics are disabled.
+    bool flush_metrics = 29;
+    // Clear all runner-side metrics (e.g. after a benchmark warm-up).
+    bool reset_metrics = 30;
   }
+  // Monotonic sequence number stamped by the UI on user-input actions
+  // (motion, buttons, keys, scroll, touch) when metrics are enabled; 0
+  // otherwise. The runner echoes the highest sequence it has processed in
+  // FrameReady.input_seq so the UI can measure input-to-frame latency.
+  uint64 input_seq = 100;
 }
 
 // See ServoAction.ping.
@@ -239,7 +249,15 @@ message ServoEvent {
     // A context menu on web content (e.g. right-click). The UI should present
     // the menu and reply with a ServoResponse carrying a ContextMenuResponse.
     ContextMenuRequest context_menu_request = 15;
+    // Reply to ServoAction.flush_metrics.
+    MetricsReport metrics_report = 16;
   }
+}
+
+// A snapshot of the runner's metrics, as the JSON object produced by
+// servo_gtk::metrics::snapshot_json().
+message MetricsReport {
+  string json = 1;
 }
 
 // See ServoEvent.ping_request.
@@ -317,6 +335,14 @@ message FrameReady {
   bytes rgba_data = 1;
   uint32 width = 2;
   uint32 height = 3;
+  // The fields below are only populated when metrics are enabled.
+  // Highest ServoAction.input_seq the runner had processed before painting.
+  uint64 input_seq = 4;
+  // g_get_monotonic_time() (CLOCK_MONOTONIC, microseconds, comparable across
+  // processes on the same host) when the runner started painting this frame,
+  // and when it began writing it to the pipe.
+  int64 paint_start_us = 5;
+  int64 send_start_us = 6;
 }
 
 message CursorChanged {
