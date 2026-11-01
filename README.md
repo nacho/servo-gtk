@@ -32,6 +32,96 @@ cargo build
 cargo run --example browser
 ```
 
+## Metrics
+
+servo-gtk has built-in, zero-cost-when-off observability. Metrics cover both
+processes (the GTK UI process and the Servo runner subprocess) and are merged
+into one JSON report written by the UI process.
+
+### Enabling
+
+| Variable | Meaning |
+| --- | --- |
+| `SERVO_GTK_METRICS=path` | Enable metrics and write the JSON report to `path` (atomically). |
+| `SERVO_GTK_METRICS=stderr` (or `1`) | Enable metrics and print the report to stderr. |
+| `SERVO_GTK_METRICS_INTERVAL=secs` | Periodic report interval (default `5`; `0` disables). A final report is also written when the `WebView` is disposed. |
+
+Unset, empty or `0` disables metrics; every call site then costs a single
+atomic load.
+
+Programmatically: `servo_gtk::metrics::set_enabled(true)` before creating the
+`WebView`, then `webview.flush_metrics(|report| ...)` and
+`webview.reset_metrics()`.
+
+### Report layout
+
+```json
+{
+  "schema": 1,
+  "pid": 1234,
+  "ui":     { "uptime_s": 12.3, "counters": { "ui.frames": 600 },
+              "histograms": { "ui.frame.interval_us":
+                { "count": 600, "sum": 0, "mean": 0.0, "min": 0, "p50": 0, "p90": 0, "p95": 0, "p99": 0, "max": 0 } } },
+  "runner": { "uptime_s": 12.1, "counters": {}, "histograms": {} }
+}
+```
+
+Histograms ending in `_us` are durations in microseconds. `runner` is `null`
+if no runner report was received.
+
+### Metrics
+
+Runner process (`runner.*`):
+
+| Name | Meaning |
+| --- | --- |
+| `runner.frame.paint_us` | `webview.paint()` |
+| `runner.frame.present_us` | present / buffer swap |
+| `runner.frame.readback_us` | GL readback (`read_to_image`) |
+| `runner.frame.encode_us` | protobuf encoding of `FrameReady` |
+| `runner.frame.write_us` | pipe write, including back-pressure |
+| `runner.frame.total_us` | whole frame-ready notification, start to end |
+| `runner.frame.bytes` | encoded frame size |
+| `runner.frame.interval_us` | time between consecutive frame notifications |
+| `runner.frames` | counter: frames sent |
+| `runner.loop.iteration_us` | one whole event-loop iteration |
+| `runner.loop.wait_us` | time blocked waiting for actions |
+| `runner.loop.spin_us` | `servo.spin_event_loop()` |
+| `runner.loop.actions_us` | processing the drained actions |
+| `runner.loop.actions_per_iter` | actions handled per iteration (after coalescing, when > 0) |
+| `runner.loop.iterations` | counter: loop iterations |
+| `runner.actions.received` / `runner.actions.coalesced` | counters: actions received / merged away |
+| `runner.log_messages` | counter: log messages forwarded |
+
+UI process (`ui.*`):
+
+| Name | Meaning |
+| --- | --- |
+| `ui.ipc.read_body_us` | reading a message body after its length prefix |
+| `ui.ipc.decode_us` | protobuf decode |
+| `ui.ipc.frame_bytes` | frame message size |
+| `ui.ipc.action_queue_us` | `send_action()` until written to the pipe (UI-to-runner back-pressure) |
+| `ui.ipc.events` / `ui.ipc.actions` | counters: events received / actions sent |
+| `ui.frame.transit_us` | runner send start until fully received in the UI |
+| `ui.frame.runner_to_ui_us` | runner paint start until received in the UI |
+| `ui.frame.texture_us` | creating the GDK texture from a frame |
+| `ui.frame.paint_to_snapshot_us` | runner paint start until the texture is first drawn |
+| `ui.frame.interval_us` | time between frame arrivals |
+| `ui.frames` / `ui.frames.dropped` | counters: frames received / replaced before ever being drawn |
+| `ui.input.to_frame_us` | input event sent until a frame reflecting it arrives |
+| `ui.input.to_frame_oldest_us` | same, for the oldest pending input of each frame |
+| `ui.inputs` | counter: stamped input events |
+| `ui.load.request_to_start_us` | `load_url`/`load_html`/`reload` until load start |
+| `ui.load.request_to_end_us` | API request until load end |
+| `ui.load.start_to_end_us` | load start until load end |
+| `ui.load.end_to_first_frame_us` | load end until the first frame |
+| `ui.loads` | counter: page loads |
+
+Keep the window visible while measuring: the compositor throttles drawing for
+occluded windows, which shows up as a high `ui.frames.dropped` and few
+`ui.frame.paint_to_snapshot_us` samples (the runner-side and input metrics are
+unaffected).
+
 ## Using as a Library
 
 Add to your `Cargo.toml`:

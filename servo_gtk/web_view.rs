@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use crate::key_tables::KeyTables;
+use crate::metrics;
 use crate::proto_ipc::{
     AuthRequest, ContextMenuRequest, FileChooserRequest, PermissionRequest, ScriptDialogKind,
     ScriptDialogRequest, ServoEvent, servo_event,
@@ -17,8 +18,10 @@ use gtk::prelude::*;
 use gtk::{glib, subclass::prelude::*};
 use image::RgbaImage;
 use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::OnceLock;
+use std::time::Instant;
 
 const G_LOG_DOMAIN: &str = "ServoGtk";
 
@@ -54,9 +57,20 @@ pub enum LoadEvent {
 mod imp {
     use super::*;
 
+    pub type FlushCallback = Box<dyn FnOnce(&serde_json::Value)>;
+
     #[derive(glib::Properties, Default)]
     #[properties(wrapper_type = super::WebView)]
     pub struct WebView {
+        // Metrics state; only touched when metrics are enabled.
+        pub pending_flushes: RefCell<VecDeque<FlushCallback>>,
+        pub flush_source: RefCell<Option<glib::SourceId>>,
+        pub load_request: Cell<Option<Instant>>,
+        pub load_start: Cell<Option<Instant>>,
+        pub load_end: Cell<Option<Instant>>,
+        /// paint_start_us of the newest texture not yet drawn (0 = drawn).
+        pub pending_paint_start: Cell<i64>,
+        pub last_frame_recv_us: Cell<i64>,
         pub servo_runner: RefCell<Option<Rc<ServoRunner>>>,
         pub memory_texture: RefCell<Option<gdk::MemoryTexture>>,
         pub key_tables: KeyTables,
@@ -138,9 +152,9 @@ mod imp {
 
             let obj_weak = self.obj().downgrade();
             glib::spawn_future_local(async move {
-                while let Ok(event) = event_receiver.recv().await {
+                while let Ok((event, recv_us)) = event_receiver.recv().await {
                     if let Some(obj) = obj_weak.upgrade() {
-                        obj.process_servo_event(event);
+                        obj.process_servo_event(event, recv_us);
                     } else {
                         break;
                     }
@@ -295,11 +309,54 @@ mod imp {
             });
 
             self.obj().set_focusable(true);
+
+            if metrics::enabled()
+                && let Some(interval) = metrics::flush_interval()
+            {
+                let obj_weak = self.obj().downgrade();
+                let id = glib::timeout_add_local(interval, move || {
+                    let Some(obj) = obj_weak.upgrade() else {
+                        return glib::ControlFlow::Break;
+                    };
+                    if let Some(servo) = obj.imp().servo_runner.borrow().as_ref() {
+                        servo.flush_metrics();
+                    }
+                    glib::ControlFlow::Continue
+                });
+                self.flush_source.replace(Some(id));
+            }
             info!("Webview constructed");
         }
 
         fn dispose(&self) {
+            if let Some(id) = self.flush_source.take() {
+                id.remove();
+            }
             if let Some(servo) = self.servo_runner.borrow().as_ref() {
+                if metrics::enabled() {
+                    // Best effort: ask for a final report and write it once it
+                    // arrives (or give up after a short timeout), since the
+                    // regular event loop stops with the widget.
+                    servo.flush_metrics();
+                    let receiver = servo.event_receiver();
+                    let closer = receiver.clone();
+                    glib::spawn_future_local(async move {
+                        glib::timeout_future(std::time::Duration::from_secs(3)).await;
+                        closer.close();
+                    });
+                    glib::spawn_future_local(async move {
+                        while let Ok((event, _)) = receiver.recv().await {
+                            if let Some(servo_event::Event::MetricsReport(r)) = event.event {
+                                let runner = serde_json::from_str(&r.json).ok();
+                                metrics::write_report(&metrics::build_report(
+                                    metrics::snapshot_json(),
+                                    runner,
+                                ));
+                                break;
+                            }
+                        }
+                    });
+                }
                 servo.shutdown();
             }
         }
@@ -308,6 +365,15 @@ mod imp {
     impl WidgetImpl for WebView {
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
             if let Some(texture) = self.memory_texture.borrow().as_ref() {
+                if metrics::enabled() {
+                    let paint_start = self.pending_paint_start.replace(0);
+                    if paint_start > 0 {
+                        metrics::record(
+                            "ui.frame.paint_to_snapshot_us",
+                            (metrics::monotonic_us() - paint_start).max(0) as u64,
+                        );
+                    }
+                }
                 let bounds = gtk::graphene::Rect::new(
                     0.0,
                     0.0,
@@ -391,6 +457,7 @@ impl WebView {
     pub fn load_url(&self, url: &str) {
         let imp = self.imp();
         if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+            imp.load_request.set(metrics::start());
             servo.load_url(url);
         }
     }
@@ -404,6 +471,7 @@ impl WebView {
     pub fn load_html(&self, html: &str, base_url: Option<&str>) {
         let imp = self.imp();
         if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+            imp.load_request.set(metrics::start());
             servo.load_html(html, base_url);
         }
     }
@@ -425,6 +493,7 @@ impl WebView {
     pub fn reload(&self) {
         let imp = self.imp();
         if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+            imp.load_request.set(metrics::start());
             servo.reload();
         }
     }
@@ -483,6 +552,51 @@ impl WebView {
                 f(obj, &url);
             }),
         )
+    }
+
+    /// Ask the runner for its metrics, merge them with this process's metrics
+    /// and invoke `callback` with the merged report (also written via
+    /// [`metrics::write_report`]). If metrics are disabled, `callback` is
+    /// invoked immediately with a UI-only report.
+    pub fn flush_metrics<F: FnOnce(&serde_json::Value) + 'static>(&self, callback: F) {
+        let imp = self.imp();
+        if metrics::enabled()
+            && let Some(servo) = imp.servo_runner.borrow().as_ref()
+        {
+            imp.pending_flushes
+                .borrow_mut()
+                .push_back(Box::new(callback));
+            servo.flush_metrics();
+            return;
+        }
+        callback(&metrics::build_report(metrics::snapshot_json(), None));
+    }
+
+    /// Clear UI- and runner-side metrics (e.g. after warm-up).
+    pub fn reset_metrics(&self) {
+        if !metrics::enabled() {
+            return;
+        }
+        metrics::reset();
+        // Drop in-flight timing anchors so pre-reset events (e.g. a warm-up
+        // load) don't produce samples after the reset.
+        let imp = self.imp();
+        imp.load_request.set(None);
+        imp.load_start.set(None);
+        imp.load_end.set(None);
+        if let Some(servo) = imp.servo_runner.borrow().as_ref() {
+            servo.reset_metrics();
+        }
+    }
+
+    fn handle_metrics_report(&self, json: &str) {
+        let runner = serde_json::from_str(json).ok();
+        let report = metrics::build_report(metrics::snapshot_json(), runner);
+        metrics::write_report(&report);
+        let callback = self.imp().pending_flushes.borrow_mut().pop_front();
+        if let Some(callback) = callback {
+            callback(&report);
+        }
     }
 
     /// The display's fractional device-pixel ratio for this widget.
@@ -938,21 +1052,29 @@ impl WebView {
         popover.popup();
     }
 
-    fn process_servo_event(&self, event: ServoEvent) {
+    fn process_servo_event(&self, event: ServoEvent, recv_us: i64) {
         let Some(event_type) = event.event else {
             return;
         };
 
         match event_type {
             servo_event::Event::FrameReady(frame_ready) => {
+                let imp = self.imp();
+                if metrics::enabled() {
+                    self.record_frame_metrics(
+                        recv_us,
+                        frame_ready.input_seq,
+                        frame_ready.paint_start_us,
+                        frame_ready.send_start_us,
+                    );
+                }
+                let texture_start = metrics::start();
                 let rgba_image = RgbaImage::from_raw(
                     frame_ready.width,
                     frame_ready.height,
                     frame_ready.rgba_data,
                 )
                 .unwrap();
-
-                let imp = self.imp();
 
                 let bytes = glib::Bytes::from(&rgba_image.as_raw()[..]);
                 let texture = gdk::MemoryTexture::new(
@@ -963,6 +1085,7 @@ impl WebView {
                     (rgba_image.width() * 4) as usize,
                 );
 
+                metrics::stop("ui.frame.texture_us", texture_start);
                 imp.memory_texture.replace(Some(texture));
                 self.queue_draw();
             }
@@ -982,12 +1105,29 @@ impl WebView {
                 if !load_start.url.is_empty() {
                     self.set_uri(Some(load_start.url));
                 }
+                if metrics::enabled() {
+                    if let Some(req) = self.imp().load_request.get() {
+                        metrics::record_duration("ui.load.request_to_start_us", req.elapsed());
+                    }
+                    self.imp().load_start.set(Some(Instant::now()));
+                }
                 self.set_is_loading(true);
                 self.emit_load_changed(LoadEvent::Started);
             }
             servo_event::Event::LoadEnd(load_end) => {
                 if !load_end.url.is_empty() {
                     self.set_uri(Some(load_end.url));
+                }
+                if metrics::enabled() {
+                    let imp = self.imp();
+                    metrics::count("ui.loads", 1);
+                    if let Some(req) = imp.load_request.take() {
+                        metrics::record_duration("ui.load.request_to_end_us", req.elapsed());
+                    }
+                    if let Some(start) = imp.load_start.take() {
+                        metrics::record_duration("ui.load.start_to_end_us", start.elapsed());
+                    }
+                    imp.load_end.set(Some(Instant::now()));
                 }
                 self.set_is_loading(false);
                 self.emit_load_changed(LoadEvent::Finished);
@@ -1034,6 +1174,47 @@ impl WebView {
             servo_event::Event::ContextMenuRequest(request) => {
                 self.show_context_menu(request);
             }
+            servo_event::Event::MetricsReport(report) => {
+                self.handle_metrics_report(&report.json);
+            }
+        }
+    }
+
+    /// Frame-arrival metrics (only called when metrics are enabled).
+    fn record_frame_metrics(
+        &self,
+        recv_us: i64,
+        input_seq: u64,
+        paint_start_us: i64,
+        send_us: i64,
+    ) {
+        let imp = self.imp();
+        metrics::count("ui.frames", 1);
+        let last = imp.last_frame_recv_us.replace(recv_us);
+        if last > 0 && recv_us > 0 {
+            metrics::record("ui.frame.interval_us", (recv_us - last).max(0) as u64);
+        }
+        if send_us > 0 && recv_us > 0 {
+            metrics::record("ui.frame.transit_us", (recv_us - send_us).max(0) as u64);
+        }
+        if paint_start_us > 0 && recv_us > 0 {
+            metrics::record(
+                "ui.frame.runner_to_ui_us",
+                (recv_us - paint_start_us).max(0) as u64,
+            );
+        }
+        // A texture that was replaced before ever being drawn was dropped.
+        if imp.pending_paint_start.get() != 0 {
+            metrics::count("ui.frames.dropped", 1);
+        }
+        imp.pending_paint_start.set(paint_start_us);
+        if let Some(end) = imp.load_end.take() {
+            metrics::record_duration("ui.load.end_to_first_frame_us", end.elapsed());
+        }
+        if input_seq > 0
+            && let Some(servo) = imp.servo_runner.borrow().as_ref()
+        {
+            servo.complete_inputs_up_to(input_seq);
         }
     }
 
