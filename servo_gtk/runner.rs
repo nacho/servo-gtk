@@ -33,7 +33,7 @@ use servo::{ConsoleLogLevel, UserContentManager, UserScript};
 use servo::{ContextMenu, EmbedderControl, FilePicker, SimpleDialog};
 use servo::{
     DeviceIntRect, DeviceVector2D, InputEvent, KeyboardEvent, MouseButton, MouseButtonAction,
-    MouseButtonEvent, MouseMoveEvent, Opts, Scroll, ServoBuilder,
+    MouseButtonEvent, MouseMoveEvent, Opts, Scroll, ScrollState, ServoBuilder,
 };
 use servo::{RenderingContext, SoftwareRenderingContext, WebView, WebViewBuilder, WebViewDelegate};
 use std::str::FromStr;
@@ -44,8 +44,8 @@ use url::Url;
 
 use crate::proto_ipc::{
     CursorChanged, FileChooserRequest, FrameReady, LoadEnd, LoadStart, LogLevel, LogMessage,
-    PingRequest, ScriptDialogKind, ScriptDialogRequest, ScriptMessage, ServoAction, ServoEvent,
-    TitleChanged, UrlChanged, servo_action, servo_event,
+    PingRequest, ScriptDialogKind, ScriptDialogRequest, ScriptMessage, ScrollStateChanged,
+    ServoAction, ServoEvent, TitleChanged, UrlChanged, servo_action, servo_event,
 };
 
 /// Prefix used by the injected script-message shim when forwarding a page
@@ -325,6 +325,10 @@ impl WebViewDelegate for ServoWebViewDelegate {
         let _ = self.event_pipe.send(event);
     }
 
+    fn notify_scroll_state_changed(&self, _webview: WebView, scroll_state: ScrollState) {
+        let _ = self.event_pipe.send(scroll_state_to_event(scroll_state));
+    }
+
     fn notify_page_title_changed(&self, _webview: WebView, title: Option<String>) {
         let event = ServoEvent {
             event: Some(servo_event::Event::TitleChanged(TitleChanged {
@@ -548,15 +552,15 @@ fn script_message_handler_shim(name: &str) -> String {
 /// Map a Servo [`LoadStatus`] to the corresponding [`ServoEvent`], if any.
 ///
 /// Per the servo-gtk IPC contract we only surface the start and completion of
-/// a load: `Started` becomes a [`LoadStart`] and `Complete` becomes a
-/// [`LoadEnd`]. The intermediate `HeadParsed` state has no dedicated event and
+/// a load: `Started` becomes a [`LoadStart`], and both `Complete` and
+/// `Stopped` become a [`LoadEnd`]. The intermediate `HeadParsed` state has no dedicated event and
 /// maps to `None`.
 fn load_status_to_event(status: LoadStatus, url: String) -> Option<ServoEvent> {
     match status {
         LoadStatus::Started => Some(ServoEvent {
             event: Some(servo_event::Event::LoadStart(LoadStart { url })),
         }),
-        LoadStatus::Complete => Some(ServoEvent {
+        LoadStatus::Complete | LoadStatus::Stopped => Some(ServoEvent {
             event: Some(servo_event::Event::LoadEnd(LoadEnd { url })),
         }),
         LoadStatus::HeadParsed => None,
@@ -787,6 +791,20 @@ fn clamp_zoom_level(level: f64) -> f32 {
     level.clamp(MIN_ZOOM, MAX_ZOOM) as f32
 }
 
+/// Build the event that reports a [`ScrollState`] to the UI.
+fn scroll_state_to_event(scroll_state: ScrollState) -> ServoEvent {
+    ServoEvent {
+        event: Some(servo_event::Event::ScrollStateChanged(ScrollStateChanged {
+            offset_x: scroll_state.offset.x as f64,
+            offset_y: scroll_state.offset.y as f64,
+            content_width: scroll_state.content_size.width as f64,
+            content_height: scroll_state.content_size.height as f64,
+            viewport_width: scroll_state.viewport_size.width as f64,
+            viewport_height: scroll_state.viewport_size.height as f64,
+        })),
+    }
+}
+
 /// Queue `action` for processing, merging it into the previous one when the
 /// intermediate states carry no information.
 fn push_coalesced_input(pending: &mut Vec<servo_action::Action>, action: ServoAction) {
@@ -803,6 +821,14 @@ fn push_coalesced_input(pending: &mut Vec<servo_action::Action>, action: ServoAc
         (Some(servo_action::Action::Scroll(last)), servo_action::Action::Scroll(new)) => {
             last.dx += new.dx;
             last.dy += new.dy;
+            last.x = new.x;
+            last.y = new.y;
+            return;
+        }
+        // Only the latest scrollbar position matters.
+        (Some(servo_action::Action::ScrollTo(last)), servo_action::Action::ScrollTo(new)) => {
+            last.x = new.x;
+            last.y = new.y;
             return;
         }
         _ => {}
@@ -1067,17 +1093,27 @@ pub fn run() {
                     )));
                 }
                 servo_action::Action::Scroll(scroll) => {
-                    log::debug!("Scroll: dx={}, dy={}", scroll.dx, scroll.dy);
-                    // FIXME: 20 and 10 are random numbers that appear in
-                    // winit_minimal. We should properly understand it and
-                    // maybe add some constants
+                    log::debug!(
+                        "Scroll: dx={}, dy={} at ({}, {})",
+                        scroll.dx,
+                        scroll.dy,
+                        scroll.x,
+                        scroll.y
+                    );
+                    // Servo scrolls whatever is under the given point, so it
+                    // must be where the pointer is: pages such as PDF.js
+                    // scroll an inner container, not the document.
                     webview.notify_scroll_event(
                         Scroll::Delta(WebViewVector::Device(DeviceVector2D::new(
-                            20.0 * scroll.dx as f32,
-                            20.0 * scroll.dy as f32,
+                            scroll.dx as f32,
+                            scroll.dy as f32,
                         ))),
-                        WebViewPoint::Device(Point2D::new(10.0, 10.0)),
+                        WebViewPoint::Device(Point2D::new(scroll.x as f32, scroll.y as f32)),
                     );
+                }
+                servo_action::Action::ScrollTo(scroll_to) => {
+                    log::debug!("Scroll to: ({}, {})", scroll_to.x, scroll_to.y);
+                    webview.scroll_to(Point2D::new(scroll_to.x as f32, scroll_to.y as f32));
                 }
                 servo_action::Action::Shutdown(_) => {
                     log::info!("Shutting down servo");
@@ -1419,6 +1455,85 @@ mod tests {
         assert!(url.contains("%C3%A9"));
         // Unreserved characters pass through.
         assert!(url.contains("href"));
+    }
+
+    fn scroll(dx: f64, dy: f64, x: f64, y: f64) -> ServoAction {
+        ServoAction {
+            action: Some(servo_action::Action::Scroll(crate::proto_ipc::Scroll {
+                dx,
+                dy,
+                x,
+                y,
+            })),
+        }
+    }
+
+    fn scroll_to(x: f64, y: f64) -> ServoAction {
+        ServoAction {
+            action: Some(servo_action::Action::ScrollTo(crate::proto_ipc::ScrollTo {
+                x,
+                y,
+            })),
+        }
+    }
+
+    #[test]
+    fn coalesced_scrolls_sum_deltas_and_keep_last_position() {
+        let mut pending = Vec::new();
+        push_coalesced_input(&mut pending, scroll(1.0, 10.0, 5.0, 6.0));
+        push_coalesced_input(&mut pending, scroll(2.0, -4.0, 7.0, 8.0));
+        assert_eq!(
+            pending,
+            vec![servo_action::Action::Scroll(crate::proto_ipc::Scroll {
+                dx: 3.0,
+                dy: 6.0,
+                x: 7.0,
+                y: 8.0,
+            })]
+        );
+    }
+
+    #[test]
+    fn coalesced_scroll_to_keeps_only_last_position() {
+        let mut pending = Vec::new();
+        push_coalesced_input(&mut pending, scroll_to(0.0, 100.0));
+        push_coalesced_input(&mut pending, scroll_to(10.0, 300.0));
+        assert_eq!(
+            pending,
+            vec![servo_action::Action::ScrollTo(crate::proto_ipc::ScrollTo {
+                x: 10.0,
+                y: 300.0,
+            })]
+        );
+    }
+
+    #[test]
+    fn scrolls_and_scroll_tos_are_not_merged_with_each_other() {
+        let mut pending = Vec::new();
+        push_coalesced_input(&mut pending, scroll(0.0, 10.0, 1.0, 1.0));
+        push_coalesced_input(&mut pending, scroll_to(0.0, 100.0));
+        push_coalesced_input(&mut pending, scroll(0.0, 10.0, 1.0, 1.0));
+        assert_eq!(pending.len(), 3);
+    }
+
+    #[test]
+    fn scroll_state_maps_to_scroll_state_changed_event() {
+        let event = scroll_state_to_event(ScrollState {
+            offset: euclid::Vector2D::new(1.0, 2.0),
+            content_size: euclid::Size2D::new(500.0, 3000.0),
+            viewport_size: euclid::Size2D::new(500.0, 400.0),
+        });
+        assert_eq!(
+            event.event,
+            Some(servo_event::Event::ScrollStateChanged(ScrollStateChanged {
+                offset_x: 1.0,
+                offset_y: 2.0,
+                content_width: 500.0,
+                content_height: 3000.0,
+                viewport_width: 500.0,
+                viewport_height: 400.0,
+            }))
+        );
     }
 
     #[test]

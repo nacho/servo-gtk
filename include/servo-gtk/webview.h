@@ -29,6 +29,11 @@ G_BEGIN_DECLS
  * `notify::` signal) and the #ServoGtkWebView::load-changed signal. Page zoom is
  * controlled through the read-write #ServoGtkWebView:zoom-level property.
  *
+ * #ServoGtkWebView implements #GtkScrollable: place it in a #GtkScrolledWindow
+ * to get scrollbars. The page still does its own scrolling; the adjustments
+ * follow the scroll position of the page's main scroller, and moving them
+ * scrolls the page.
+ *
  * Signals:
  *
  * - #ServoGtkWebView::load-changed `(ServoGtkLoadEvent event)`: emitted when the

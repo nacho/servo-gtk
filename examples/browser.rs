@@ -199,7 +199,12 @@ fn open_browser_window(app: &Application, url: &str) {
     hbox.append(&html_button);
     hbox.append(&spinner);
     vbox.append(&hbox);
-    vbox.append(&web_view);
+
+    let scrolled_window = gtk::ScrolledWindow::new();
+    scrolled_window.set_hexpand(true);
+    scrolled_window.set_vexpand(true);
+    scrolled_window.set_child(Some(&web_view));
+    vbox.append(&scrolled_window);
 
     window.set_child(Some(&vbox));
     window.present();

@@ -281,11 +281,25 @@ impl ServoRunner {
         });
     }
 
-    pub fn scroll(&self, dx: f64, dy: f64) {
+    /// Scroll by `(dx, dy)` whatever is under `(x, y)`, all in device pixels.
+    pub fn scroll(&self, dx: f64, dy: f64, x: f64, y: f64) {
         self.send_action(ServoAction {
             action: Some(servo_action::Action::Scroll(crate::proto_ipc::Scroll {
                 dx,
                 dy,
+                x,
+                y,
+            })),
+        });
+    }
+
+    /// Scroll the page's main scroller to the absolute offset `(x, y)`, in CSS
+    /// pixels.
+    pub fn scroll_to(&self, x: f64, y: f64) {
+        self.send_action(ServoAction {
+            action: Some(servo_action::Action::ScrollTo(crate::proto_ipc::ScrollTo {
+                x,
+                y,
             })),
         });
     }
