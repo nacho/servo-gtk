@@ -19,6 +19,11 @@ pub const LEVEL_OFF: u8 = 0;
 pub const LEVEL_STANDARD: u8 = 1;
 pub const LEVEL_AGGRESSIVE: u8 = 2;
 
+/// Fallback origin when a subresource request has no referrer and the top-level
+/// document URL is not yet available, ensuring `$third-party` rules still match
+/// external ad/tracker domains instead of treating the tracker URL as first-party.
+const FALLBACK_FIRST_PARTY_ORIGIN: &str = "https://kestrel.local/";
+
 /// Adblock engine + level state.
 pub struct AdblockState {
     /// Current engine, if rules have been loaded.
@@ -89,12 +94,10 @@ impl AdblockState {
         let Some(engine) = &self.engine else {
             return false;
         };
-        // `adblock::request::Request::new` requires a valid URL with scheme/host
-        // for `source_url`; passing `""` fails URL parsing and skips blocking.
         let source = source_url
             .map(str::trim)
             .filter(|s| s.starts_with("http://") || s.starts_with("https://"))
-            .unwrap_or(url);
+            .unwrap_or(FALLBACK_FIRST_PARTY_ORIGIN);
         let Ok(request) = Request::new(url, source, resource_type) else {
             return false;
         };
@@ -113,19 +116,19 @@ impl Default for AdblockState {
 pub fn destination_to_resource_type(destination: &str) -> &'static str {
     match destination {
         "Document" => "document",
-        "Script" => "script",
-        "Image" => "image",
+        "Script" | "Worker" | "SharedWorker" | "ServiceWorker" => "script",
+        "Image" | "ImageSet" => "image",
         "Style" => "stylesheet",
         "Font" => "font",
-        "Media" | "Audio" | "Video" => "media",
+        "Media" | "Audio" | "Video" | "Track" => "media",
         "Object" | "Embed" => "object",
         "Frame" | "Iframe" => "subdocument",
         "Xhr" | "XmlHttpRequest" => "xmlhttprequest",
-        "Fetch" => "fetch",
+        "Fetch" | "Json" => "fetch",
         "WebSocket" => "websocket",
         "Ping" => "ping",
         "Beacon" => "beacon",
-        "Csp" => "csp",
+        "Csp" | "CspReport" => "csp",
         _ => "other",
     }
 }
@@ -148,6 +151,9 @@ mod tests {
             Some("https://vnexpress.net/"),
             "script"
         ));
+        // Even when referrer is None (e.g. referrerpolicy="no-referrer"),
+        // third-party tracker rules must still match.
+        assert!(state.check("https://tracker.example.org/pixel.js", None, "script"));
     }
 
     #[test]
@@ -180,6 +186,7 @@ mod tests {
         assert_eq!(destination_to_resource_type("Image"), "image");
         assert_eq!(destination_to_resource_type("Style"), "stylesheet");
         assert_eq!(destination_to_resource_type("Document"), "document");
+        assert_eq!(destination_to_resource_type("Iframe"), "subdocument");
         assert_eq!(destination_to_resource_type("Media"), "media");
         assert_eq!(destination_to_resource_type("Manifest"), "other");
     }
