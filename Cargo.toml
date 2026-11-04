@@ -20,7 +20,8 @@ name = "user_content"
 path = "examples/user_content.rs"
 
 [dependencies]
-adblock = "0.9"
+# Pin exact version to match kestrel-browser binary blob format.
+adblock = "=0.9.8"
 http = "1"
 rmp = "=0.8.9"
 gio = "0.22"
