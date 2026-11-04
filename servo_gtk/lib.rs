@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+pub mod adblock;
 /// C-ABI / FFI layer, exposing the library's GObjects to C and
 /// GObject-Introspection consumers. Split into one submodule per class.
 #[path = "ffi/lib.rs"]

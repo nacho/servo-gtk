@@ -2,68 +2,105 @@ name: CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
+  # Build time optimizations
+  CARGO_INCREMENTAL: "0"
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_BUILD_JOBS: "4"
+
+# Cần quyền write để auto-commit formatting fix.
+permissions:
+  contents: write
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          libgtk-4-dev \
-          libgl1-mesa-dev \
-          libegl1-mesa-dev \
-          libgles2-mesa-dev \
-          python3 \
-          python3-pip \
-          protobuf-compiler
+  build:
+    name: Build & Test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
 
-    - name: Install uv
-      uses: astral-sh/setup-uv@v4
-      with:
-        version: "0.8.5"
-    
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: rustfmt, clippy
-    
-    - name: Cache cargo registry
-      uses: actions/cache@v4
-      with:
-        path: ~/.cargo/registry
-        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-    
-    - name: Cache cargo index
-      uses: actions/cache@v4
-      with:
-        path: ~/.cargo/git
-        key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-    
-    - name: Cache cargo build
-      uses: actions/cache@v4
-      with:
-        path: target
-        key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-    
-    - name: Check formatting
-      run: cargo fmt -- --check
-    
-    - name: Run clippy
-      run: cargo clippy -- -D warnings
-    
-    - name: Build
-      run: cargo build --verbose
-    
-    - name: Build example
-      run: cargo build --example browser --verbose
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Cần token có quyền push nếu muốn auto-commit.
+          # Nếu repo public và branch không protected, GITHUB_TOKEN đủ.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build python3 python3-pip \
+            pkg-config curl wget file clang llvm lld \
+            libssl-dev \
+            libgtk-4-dev \
+            libepoxy-dev \
+            libx11-dev libxcb1-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libfontconfig1-dev libfreetype6-dev libharfbuzz-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libgles2-mesa-dev \
+            libgbm-dev libwayland-dev libxkbcommon-dev \
+            libsqlite3-dev \
+            protobuf-compiler
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: servo-gtk
+          cache-all-crates: true
+          cache-on-failure: true
+          cache-directories: |
+            ~/.cargo/git
+            ~/.cargo/registry
+
+      # ============================================================
+      # Auto-format — luôn chạy cargo fmt (không check), để sửa code
+      # ============================================================
+      - name: Auto-format
+        run: cargo fmt --all
+
+      # Chỉ auto-commit khi push trực tiếp lên branch (không phải PR
+      # từ fork — fork không có quyền push về repo gốc).
+      - name: Auto-commit formatting changes
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "style: auto-format with cargo fmt"
+          file_pattern: "*.rs"
+          commit_user_name: "github-actions[bot]"
+          commit_user_email: "41898282+github-actions[bot]@users.noreply.github.com"
+          commit_author: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+          skip_fetch: false
+          skip_dirty_check: false
+          skip_checkout: false
+
+      # ============================================================
+      # Clippy — vẫn -D warnings, không auto-fix vì clippy có thể
+      # thay đổi semantics. Dev phải sửa tay.
+      # ============================================================
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      # ============================================================
+      # Build & test
+      # ============================================================
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Build example
+        run: cargo build --example browser --verbose

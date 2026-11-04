@@ -30,24 +30,55 @@ message ServoAction {
     SetZoomLevel set_zoom_level = 24;
     SetHidpiScaleFactor set_hidpi_scale_factor = 25;
     LoadHtml load_html = 26;
-    // A response from the embedder (UI) to a request the runner previously
-    // emitted as a ServoEvent carrying the same request_id. This is the return
-    // path of the bidirectional request/response channel used by delegate
-    // features (dialogs, file chooser, auth, permissions, ...).
     ServoResponse response = 27;
-    // Initiate a request/response round trip for testing the channel end to
-    // end. The runner replies with a PingRequest event.
     Ping ping = 28;
+    AdblockRulesUpdate update_adblock_rules = 29;
+    SetAdblockLevel set_adblock_level = 30;
+    SetAdblockBlob set_adblock_blob = 31;
   }
 }
 
-// See ServoAction.ping.
+// ============================================================
+// Adblock extensions
+// ============================================================
+
+// UI -> runner: load or clear filter rules.
+message AdblockRulesUpdate {
+  string action = 1;
+  repeated string rules = 2;
+}
+
+enum AdblockLevel {
+  ADBLOCK_OFF = 0;
+  ADBLOCK_STANDARD = 1;
+  ADBLOCK_AGGRESSIVE = 2;
+}
+
+message SetAdblockLevel {
+  AdblockLevel level = 1;
+}
+
+// UI -> runner: deserialize a pre-serialized adblock engine blob.
+//
+// Building an engine from ~180k rules takes 5-15s; deserializing a blob
+// takes ~200ms. The UI builds the blob once (see Kestrel's adblock_rules
+// module) and sends it here for each tab's runner subprocess.
+message SetAdblockBlob {
+  bytes blob = 1;
+}
+
+message AdblockBlocked {
+  string url = 1;
+  string resource_type = 2;
+}
+
+// ============================================================
+// Existing definitions
+// ============================================================
+
 message Ping {
 }
 
-// The return path of the request/response channel. `request_id` correlates the
-// response with the request event the runner emitted; `payload` carries the
-// per-feature answer.
 message ServoResponse {
   uint64 request_id = 1;
   oneof payload {
@@ -60,67 +91,42 @@ message ServoResponse {
   }
 }
 
-// Answer to a PingRequest: `ok` is echoed straight back for the round-trip
-// test.
 message PingResponse {
   bool ok = 1;
 }
 
-// Answer to a ScriptDialogRequest. `confirmed` is true when the user accepted
-// (OK), false when cancelled/dismissed. `value` carries the prompt text when
-// the dialog was a PROMPT and was confirmed.
 message ScriptDialogResponse {
   bool confirmed = 1;
   string value = 2;
 }
 
-// Answer to a FileChooserRequest. `paths` are the absolute paths of the
-// selected files; an empty list means the picker was cancelled.
 message FileChooserResponse {
   repeated string paths = 1;
 }
 
-// Answer to an AuthRequest. When `confirmed` is false the challenge is
-// cancelled and `username`/`password` are ignored.
 message AuthResponse {
   bool confirmed = 1;
   string username = 2;
   string password = 3;
 }
 
-// Answer to a PermissionRequest.
 message PermissionResponse {
   bool allow = 1;
 }
 
-// Answer to a ContextMenuRequest. When `selected` is true, `index` is the
-// chosen entry's index into the request's items; otherwise the menu was
-// dismissed.
 message ContextMenuResponse {
   bool selected = 1;
   uint32 index = 2;
 }
 
-// Set the page zoom level, as a browser's Ctrl+/Ctrl- would: the page's
-// devicePixelRatio changes and the page re-lays out, rather than the rendered
-// output simply being magnified. The runner clamps the value to [0.1, 10.0].
 message SetZoomLevel {
   double level = 1;
 }
 
-// Set the HiDPI scale factor: device pixels per logical (device-independent)
-// pixel, e.g. 2.0 on a doubled display. The surface size in Resize is always in
-// device pixels; this tells the page how large a CSS pixel is so
-// window.devicePixelRatio, media queries and layout come out right instead of
-// the page being laid out at logical size and upscaled. Non-finite or
-// non-positive values are ignored by the runner.
 message SetHidpiScaleFactor {
   float scale = 1;
 }
 
-// Load an HTML document from an in-memory string, as WebKitWebView's
-// load_html() would. `base_url` (optional) is reserved for resolving relative
-// links; when empty the runner loads the HTML via a data: URL.
 message LoadHtml {
   string html = 1;
   string base_url = 2;
@@ -215,34 +221,17 @@ message ServoEvent {
     LoadEnd load_end = 6;
     LogMessage log_message = 7;
     ScriptMessage script_message = 8;
-    // A request from the runner to the embedder (UI) that expects a
-    // ServoResponse action carrying the same request_id. Used to drive native
-    // UI for delegate features. PingRequest exercises the channel for testing.
     PingRequest ping_request = 9;
-    // Script-initiated dialog (alert/confirm/prompt). The UI must present it
-    // and reply with a ServoResponse carrying a ScriptDialogResponse.
     ScriptDialogRequest script_dialog_request = 10;
-    // A <input type=file> file chooser. The UI must present a file picker and
-    // reply with a ServoResponse carrying a FileChooserResponse.
     FileChooserRequest file_chooser_request = 11;
-    // An HTTP authentication challenge. The UI should prompt for credentials
-    // and reply with a ServoResponse carrying an AuthResponse.
     AuthRequest auth_request = 12;
-    // A permission request (geolocation, notifications, ...). The UI should
-    // prompt allow/deny and reply with a ServoResponse carrying a
-    // PermissionResponse.
     PermissionRequest permission_request = 13;
-    // Page content requested a new top-level WebView (window.open /
-    // target=_blank). The UI should open a new window hosting a fresh WebView
-    // for `url`. No response is expected.
     CreateWebView create_web_view = 14;
-    // A context menu on web content (e.g. right-click). The UI should present
-    // the menu and reply with a ServoResponse carrying a ContextMenuResponse.
     ContextMenuRequest context_menu_request = 15;
+    AdblockBlocked adblock_blocked = 16;
   }
 }
 
-// See ServoEvent.ping_request.
 message PingRequest {
   uint64 request_id = 1;
 }
@@ -253,9 +242,6 @@ enum ScriptDialogKind {
   PROMPT = 2;
 }
 
-// A script dialog (window.alert/confirm/prompt) that the UI must present. For
-// ALERT there is only an OK button; CONFIRM has OK/Cancel; PROMPT additionally
-// shows a text entry pre-filled with `default_value`.
 message ScriptDialogRequest {
   uint64 request_id = 1;
   ScriptDialogKind kind = 2;
@@ -263,49 +249,33 @@ message ScriptDialogRequest {
   string default_value = 4;
 }
 
-// A <input type=file> file chooser. `allow_multiple` reflects the `multiple`
-// attribute. `filter_patterns` are glob-style patterns (e.g. "*.png") the UI
-// may use to filter selectable files.
 message FileChooserRequest {
   uint64 request_id = 1;
   bool allow_multiple = 2;
   repeated string filter_patterns = 3;
 }
 
-// An HTTP authentication challenge. `url` is the resource that triggered it and
-// `for_proxy` indicates a proxy-server (rather than origin-server) challenge.
 message AuthRequest {
   uint64 request_id = 1;
   string url = 2;
   bool for_proxy = 3;
 }
 
-// A request from page content to use a permission-gated feature.
-// `feature_name` is a human-readable name (e.g. "Geolocation").
 message PermissionRequest {
   uint64 request_id = 1;
   string feature_name = 2;
 }
 
-// Page content asked to open a new top-level WebView (window.open /
-// target=_blank). `url` is the resolved destination. This is a one-way
-// notification: the UI opens a new window with its own WebView.
 message CreateWebView {
   string url = 1;
 }
 
-// One entry in a context menu. A separator carries no label and is not
-// selectable; otherwise `label` is shown and `enabled` controls whether it can
-// be chosen.
 message ContextMenuEntry {
   string label = 1;
   bool enabled = 2;
   bool separator = 3;
 }
 
-// A context menu to present on web content. `items` is ordered; the UI replies
-// with the index of the chosen item (into this list). `x`/`y` are the
-// device-pixel position of the triggering element, for menu placement.
 message ContextMenuRequest {
   uint64 request_id = 1;
   repeated ContextMenuEntry items = 2;
@@ -351,38 +321,26 @@ message LogMessage {
   string message = 2;
 }
 
-// A user script to inject into every page loaded in the WebView. Mirrors the
-// role of WebKitUserScript. Servo does not support injection-time or
-// injected-frames options at this revision, so only the source is carried.
 message AddUserScript {
   string source = 1;
 }
 
-// A user CSS style sheet to inject into every page loaded in the WebView.
 message AddUserStyleSheet {
   string source = 1;
 }
 
-// Register a named script message handler. Injected page JavaScript can then
-// call `window.servoGtk.messageHandlers.<name>.postMessage(value)` to send a
-// message to the native side, delivered back as a ScriptMessage event.
 message RegisterScriptMessageHandler {
   string name = 1;
 }
 
-// Unregister a previously registered named script message handler.
 message UnregisterScriptMessageHandler {
   string name = 1;
 }
 
-// Evaluate a snippet of JavaScript in the page. Fire-and-forget: the result is
-// not currently returned to the native side.
 message EvaluateJavascript {
   string source = 1;
 }
 
-// A message sent from page JavaScript to the native side via a registered
-// script message handler. `body` is the JSON-serialized message value.
 message ScriptMessage {
   string name = 1;
   string body = 2;
