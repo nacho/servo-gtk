@@ -55,8 +55,9 @@ mod imp {
         #[property(get, set = Self::set_zoom_level, name = "zoom-level", minimum = 0.1, maximum = 10.0, default = 1.0)]
         pub zoom_level: Cell<f64>,
 
-        /// Counter for consecutive load-starts without a completed load.
+        /// Counter for consecutive load-starts of the SAME URL without a completed load.
         pub load_loop_guard: Cell<u32>,
+        pub last_load_start_url: RefCell<String>,
     }
 
     #[glib::object_subclass]
@@ -329,6 +330,7 @@ impl WebView {
 
     pub fn load_url(&self, url: &str) {
         let imp = self.imp();
+        imp.load_loop_guard.set(0);
         if let Some(servo) = imp.servo_runner.borrow().as_ref() {
             servo.load_url(url);
         }
@@ -336,6 +338,7 @@ impl WebView {
 
     pub fn load_html(&self, html: &str, base_url: Option<&str>) {
         let imp = self.imp();
+        imp.load_loop_guard.set(0);
         if let Some(servo) = imp.servo_runner.borrow().as_ref() {
             servo.load_html(html, base_url);
         }
@@ -384,6 +387,7 @@ impl WebView {
 
     pub fn reload(&self) {
         let imp = self.imp();
+        imp.load_loop_guard.set(0);
         if let Some(servo) = imp.servo_runner.borrow().as_ref() {
             servo.reload();
         }
@@ -391,6 +395,7 @@ impl WebView {
 
     pub fn go_back(&self) {
         let imp = self.imp();
+        imp.load_loop_guard.set(0);
         if let Some(servo) = imp.servo_runner.borrow().as_ref() {
             servo.go_back();
         }
@@ -398,6 +403,7 @@ impl WebView {
 
     pub fn go_forward(&self) {
         let imp = self.imp();
+        imp.load_loop_guard.set(0);
         if let Some(servo) = imp.servo_runner.borrow().as_ref() {
             servo.go_forward();
         }
@@ -880,12 +886,18 @@ impl WebView {
             }
             servo_event::Event::LoadStart(load_start) => {
                 let imp = self.imp();
-                let count = imp.load_loop_guard.get().saturating_add(1);
+                let same_url = *imp.last_load_start_url.borrow() == load_start.url;
+                let count = if same_url {
+                    imp.load_loop_guard.get().saturating_add(1)
+                } else {
+                    *imp.last_load_start_url.borrow_mut() = load_start.url.clone();
+                    1
+                };
                 imp.load_loop_guard.set(count);
 
-                if count > 5 {
+                if count > 8 {
                     log::warn!(
-                        "[kestrel] Breaking navigation loop after {} load-starts (url: {})",
+                        "[kestrel] Breaking navigation loop after {} consecutive load-starts (url: {})",
                         count,
                         load_start.url
                     );
