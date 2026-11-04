@@ -4,7 +4,7 @@
 
 //! Servo runner subprocess entry point.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::BorrowedFd;
@@ -174,6 +174,8 @@ struct ServoWebViewDelegate {
     rendering_context: Rc<dyn RenderingContext>,
     event_pipe: EventPipe,
     adblock: Rc<RefCell<AdblockState>>,
+    current_page_url: Rc<RefCell<Option<String>>>,
+    frame_dirty: Rc<Cell<bool>>,
     pending_dialogs: Rc<RefCell<PendingRequests<SimpleDialog>>>,
     pending_file_pickers: Rc<RefCell<PendingRequests<FilePicker>>>,
     pending_auth: Rc<RefCell<PendingRequests<AuthenticationRequest>>>,
@@ -201,6 +203,8 @@ impl ServoWebViewDelegate {
         rendering_context: Rc<dyn RenderingContext>,
         event_pipe: EventPipe,
         adblock: Rc<RefCell<AdblockState>>,
+        current_page_url: Rc<RefCell<Option<String>>>,
+        frame_dirty: Rc<Cell<bool>>,
         pending: &PendingState,
         popups: Rc<PopupState>,
     ) -> Self {
@@ -208,6 +212,8 @@ impl ServoWebViewDelegate {
             rendering_context,
             event_pipe,
             adblock,
+            current_page_url,
+            frame_dirty,
             pending_dialogs: pending.dialogs.clone(),
             pending_file_pickers: pending.file_pickers.clone(),
             pending_auth: pending.auth.clone(),
@@ -224,19 +230,26 @@ impl WebViewDelegate for ServoWebViewDelegate {
             return;
         }
 
-        let dest_debug = format!("{:?}", load.request.destination);
-        if dest_debug == "Document" || dest_debug == "Frame" || dest_debug == "Iframe" {
+        let url = load.request.url.as_str().to_string();
+        if url.starts_with("data:") || url.starts_with("about:") || url.starts_with("blob:") {
             return;
         }
 
-        let url = load.request.url.as_str().to_string();
+        let dest_debug = format!("{:?}", load.request.destination);
+        // Any non-main-frame Document/Frame/Iframe load is a subdocument (iframe).
+        let resource_type = if matches!(dest_debug.as_str(), "Document" | "Frame" | "Iframe") {
+            "subdocument"
+        } else {
+            destination_to_resource_type(&dest_debug)
+        };
+
         let source_url = load
             .request
             .referrer_url
             .as_ref()
             .map(|u| u.as_str().to_string())
-            .or_else(|| webview.url().map(|u| u.to_string()));
-        let resource_type = destination_to_resource_type(&dest_debug);
+            .or_else(|| webview.url().map(|u| u.to_string()))
+            .or_else(|| self.current_page_url.borrow().clone());
 
         if self
             .adblock
@@ -264,26 +277,8 @@ impl WebViewDelegate for ServoWebViewDelegate {
         }
     }
 
-    fn notify_new_frame_ready(&self, webview: WebView) {
-        let size = self.rendering_context.size2d().to_i32();
-        let viewport_rect = DeviceIntRect::from_origin_and_size(Point2D::origin(), size);
-        webview.paint();
-        self.rendering_context.present();
-
-        if let Some(rgba_image) = self.rendering_context.read_to_image(viewport_rect) {
-            let width = rgba_image.width();
-            let height = rgba_image.height();
-            let data = rgba_image.into_raw();
-
-            let event = ServoEvent {
-                event: Some(servo_event::Event::FrameReady(FrameReady {
-                    rgba_data: data,
-                    width,
-                    height,
-                })),
-            };
-            let _ = self.event_pipe.send(event);
-        }
+    fn notify_new_frame_ready(&self, _webview: WebView) {
+        self.frame_dirty.set(true);
     }
 
     fn notify_cursor_changed(&self, _webview: servo::WebView, cursor: servo::Cursor) {
@@ -333,10 +328,12 @@ impl WebViewDelegate for ServoWebViewDelegate {
     }
 
     fn notify_url_changed(&self, _webview: WebView, url: Url) {
+        let url_str = url.to_string();
+        if url_str.starts_with("http://") || url_str.starts_with("https://") {
+            *self.current_page_url.borrow_mut() = Some(url_str.clone());
+        }
         let event = ServoEvent {
-            event: Some(servo_event::Event::UrlChanged(UrlChanged {
-                url: url.to_string(),
-            })),
+            event: Some(servo_event::Event::UrlChanged(UrlChanged { url: url_str })),
         };
         let _ = self.event_pipe.send(event);
     }
@@ -802,15 +799,20 @@ pub fn run() {
     let pending_state = PendingState::default();
     let popups = Rc::new(PopupState::default());
     let adblock = Rc::new(RefCell::new(AdblockState::new()));
+    let current_page_url = Rc::new(RefCell::new(None));
+    let frame_dirty = Rc::new(Cell::new(false));
+
     let delegate = Rc::new(ServoWebViewDelegate::new(
         rendering_context.clone(),
         event_pipe.clone(),
         adblock.clone(),
+        current_page_url.clone(),
+        frame_dirty.clone(),
         &pending_state,
         popups.clone(),
     ));
 
-    let webview = WebViewBuilder::new(&servo, rendering_context)
+    let webview = WebViewBuilder::new(&servo, rendering_context.clone())
         .delegate(delegate)
         .user_content_manager(user_content_manager.clone())
         .build();
@@ -846,11 +848,17 @@ pub fn run() {
                 servo_action::Action::LoadUrl(load_url) => {
                     log::info!("Loading URL: {}", load_url.url);
                     if let Ok(parsed_url) = Url::parse(&load_url.url) {
+                        if load_url.url.starts_with("http://")
+                            || load_url.url.starts_with("https://")
+                        {
+                            *current_page_url.borrow_mut() = Some(load_url.url);
+                        }
                         webview.load(parsed_url);
                     }
                 }
                 servo_action::Action::LoadHtml(load_html) => {
                     log::info!("Loading HTML ({} bytes)", load_html.html.len());
+                    *current_page_url.borrow_mut() = None;
                     let data_url = html_to_data_url(&load_html.html);
                     if let Ok(parsed_url) = Url::parse(&data_url) {
                         webview.load(parsed_url);
@@ -876,6 +884,7 @@ pub fn run() {
                         current_size = new_size;
                         log::debug!("Resizing to {}x{}", new_size.width, new_size.height);
                         webview.resize(new_size);
+                        frame_dirty.set(true);
                     }
                 }
                 servo_action::Action::Motion(motion) => {
@@ -1029,6 +1038,7 @@ pub fn run() {
                 servo_action::Action::SetZoomLevel(set_zoom_level) => {
                     let zoom = clamp_zoom_level(set_zoom_level.level);
                     webview.set_page_zoom(zoom);
+                    frame_dirty.set(true);
                 }
                 servo_action::Action::SetHidpiScaleFactor(set_hidpi) => {
                     let scale = set_hidpi.scale;
@@ -1038,6 +1048,7 @@ pub fn run() {
                     {
                         current_scale = scale;
                         webview.set_hidpi_scale_factor(Scale::new(scale));
+                        frame_dirty.set(true);
                     }
                 }
                 servo_action::Action::UpdateAdblockRules(update) => {
@@ -1160,6 +1171,29 @@ pub fn run() {
         }
 
         servo.spin_event_loop();
+
+        // Coalesced frame paint & readback: at most once per event loop tick.
+        if frame_dirty.replace(false) {
+            let size = rendering_context.size2d().to_i32();
+            let viewport_rect = DeviceIntRect::from_origin_and_size(Point2D::origin(), size);
+            webview.paint();
+            rendering_context.present();
+
+            if let Some(rgba_image) = rendering_context.read_to_image(viewport_rect) {
+                let width = rgba_image.width();
+                let height = rgba_image.height();
+                let data = rgba_image.into_raw();
+
+                let event = ServoEvent {
+                    event: Some(servo_event::Event::FrameReady(FrameReady {
+                        rgba_data: data,
+                        width,
+                        height,
+                    })),
+                };
+                let _ = event_pipe.send(event);
+            }
+        }
 
         {
             let mut aux = popups.aux.borrow_mut();
